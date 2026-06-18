@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Linear Gantt</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0d0d14; color: #e2e8f0; height: 100vh; overflow: hidden; }
+    #root { height: 100vh; display: flex; flex-direction: column; }
+
+    /* ── Layout ── */
+    .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    .topbar { background: #12121f; border-bottom: 1px solid #1e1e30; padding: 0 20px; height: 48px; display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+    .topbar-title { font-size: 15px; font-weight: 700; color: #a78bfa; letter-spacing: -0.3px; }
+    .topbar-spacer { flex: 1; }
+    .btn-ghost { background: none; border: 1px solid #2d2d44; color: #9ca3af; border-radius: 6px; padding: 4px 11px; font-size: 12px; cursor: pointer; transition: all 0.1s; }
+    .btn-ghost:hover { border-color: #7c3aed; color: #c4b5fd; }
+
+    /* ── Key gate ── */
+    .key-gate { flex: 1; display: flex; align-items: center; justify-content: center; }
+    .key-card { background: #12121f; border: 1px solid #1e1e30; border-radius: 14px; padding: 36px; width: 440px; }
+    .key-card h2 { font-size: 17px; font-weight: 600; margin-bottom: 8px; color: #f1f5f9; }
+    .key-card p { color: #6b7280; font-size: 13px; margin-bottom: 22px; line-height: 1.6; }
+    .key-card p strong { color: #9ca3af; }
+    .key-input { width: 100%; background: #0a0a14; border: 1px solid #2d2d44; border-radius: 8px; padding: 10px 13px; color: #e2e8f0; font-size: 13px; font-family: 'Menlo', 'Monaco', monospace; outline: none; transition: border-color 0.15s; }
+    .key-input:focus { border-color: #7c3aed; }
+    .btn-primary { background: #7c3aed; color: #fff; border: none; border-radius: 8px; padding: 10px 18px; font-size: 14px; font-weight: 500; cursor: pointer; width: 100%; margin-top: 12px; transition: background 0.15s; }
+    .btn-primary:hover { background: #6d28d9; }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Breadcrumb ── */
+    .breadcrumb { background: #10101c; border-bottom: 1px solid #1e1e30; padding: 0 20px; height: 36px; display: flex; align-items: center; gap: 6px; font-size: 12px; flex-shrink: 0; }
+    .bc-item { color: #6b7280; cursor: pointer; padding: 2px 4px; border-radius: 4px; transition: color 0.1s; white-space: nowrap; }
+    .bc-item:hover { color: #c4b5fd; }
+    .bc-item.current { color: #a78bfa; cursor: default; font-weight: 500; }
+    .bc-sep { color: #374151; }
+
+    /* ── Drill panels ── */
+    .content { flex: 1; display: flex; overflow: hidden; }
+    .panel { width: 260px; border-right: 1px solid #1a1a28; display: flex; flex-direction: column; flex-shrink: 0; background: #0f0f1c; overflow: hidden; }
+    .panel-header { padding: 12px 14px 8px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #4b5563; flex-shrink: 0; }
+    .panel-list { overflow-y: auto; flex: 1; }
+    .panel-item { padding: 9px 14px; cursor: pointer; font-size: 13px; color: #cbd5e1; border-bottom: 1px solid #12121e; transition: background 0.1s; display: flex; align-items: center; gap: 8px; }
+    .panel-item:hover { background: #1a1a2e; }
+    .panel-item.sel { background: #1e1b40; border-left: 3px solid #7c3aed; color: #c4b5fd; padding-left: 11px; }
+    .panel-item-key { font-family: monospace; font-size: 10.5px; color: #4b5563; flex-shrink: 0; }
+    .panel-empty { padding: 14px; color: #4b5563; font-size: 12px; }
+
+    /* ── Empty / error / loading ── */
+    .placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: #374151; font-size: 13px; }
+    .error-bar { background: #450a0a; border: 1px solid #7f1d1d; color: #fca5a5; padding: 8px 16px; font-size: 12.5px; flex-shrink: 0; }
+    .spinner { width: 18px; height: 18px; border: 2px solid #2d2d44; border-top-color: #7c3aed; border-radius: 50%; animation: spin 0.65s linear infinite; flex-shrink: 0; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-row { display: flex; align-items: center; justify-content: center; gap: 10px; color: #4b5563; font-size: 13px; padding: 48px; }
+
+    /* ── Gantt ── */
+    .gantt-wrap { flex: 1; overflow: auto; }
+    .gantt-inner { display: inline-flex; min-width: 100%; min-height: 100%; }
+    .gantt-labels { position: sticky; left: 0; z-index: 20; background: #0d0d14; flex-shrink: 0; border-right: 1px solid #1e1e30; }
+    .gantt-label-header { background: #10101c; border-bottom: 1px solid #1e1e30; display: flex; align-items: center; padding: 0 12px; font-size: 10.5px; color: #4b5563; text-transform: uppercase; letter-spacing: 0.7px; }
+    .gantt-label-row { display: flex; align-items: center; padding: 0 12px; gap: 8px; border-bottom: 1px solid #111120; cursor: pointer; overflow: hidden; }
+    .gantt-label-row:hover { background: #12121f; }
+    .gantt-label-id { font-family: monospace; font-size: 11px; flex-shrink: 0; }
+    .gantt-label-title { font-size: 12px; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* ── Tooltip ── */
+    .tt { position: fixed; background: #1a1a2e; border: 1px solid #2d2d44; border-radius: 9px; padding: 11px 14px; font-size: 12px; pointer-events: none; z-index: 9999; max-width: 290px; box-shadow: 0 8px 32px rgba(0,0,0,0.6); }
+    .tt-name { font-weight: 600; color: #f1f5f9; margin-bottom: 7px; line-height: 1.4; }
+    .tt-row { display: flex; gap: 8px; margin-top: 4px; }
+    .tt-lbl { color: #6b7280; width: 68px; flex-shrink: 0; font-size: 11px; }
+    .tt-val { color: #cbd5e1; font-size: 11px; }
+
+    /* ── Cycle warning ── */
+    .cycle-warn { background: #431407; border-top: 1px solid #7c2d12; color: #fdba74; padding: 6px 16px; font-size: 11.5px; flex-shrink: 0; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-type="module" data-presets="react">
+/** @jsxRuntime classic */
+/** @jsx React.createElement */
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── Constants ──────────────────────────────────────────────────────────────
+const LINEAR_ENDPOINT = 'https://api.linear.app/graphql';
+const ROW_H   = 36;
+const DAY_W   = 26;
+const HDR_H   = 46;
+const LBL_W   = 264;
+const BAR_PAD = 5;
+
+// ── GraphQL ────────────────────────────────────────────────────────────────
+async function gql(key, query, vars = {}) {
+  const res = await fetch(LINEAR_ENDPOINT, {
+    method: 'POST',
+    headers: { Authorization: key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, variables: vars }),
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status}${txt ? ' — ' + txt.slice(0, 160) : ''}`);
+  }
+  const json = await res.json();
+  if (json.errors?.length) throw new Error(json.errors[0].message);
+  return json.data;
+}
+
+// ── Queries ────────────────────────────────────────────────────────────────
+const Q_TEAMS = `query { teams(first:250){ nodes{ id name key } } }`;
+
+const Q_PROJECTS = `query($id:String!){
+  team(id:$id){ projects(first:250){ nodes{ id name } } }
+}`;
+
+const Q_MILESTONES = `query($id:String!){
+  project(id:$id){ projectMilestones(first:250){ nodes{ id name sortOrder } } }
+}`;
+
+const Q_ISSUES = `query($mid:ID!){
+  issues(first:250, filter:{ projectMilestone:{ id:{ eq:$mid } } }){
+    nodes{
+      id identifier title estimate
+      createdAt startedAt completedAt dueDate
+      state{ name type }
+      assignee{ displayName }
+      relations       { nodes{ type relatedIssue{ id identifier } } }
+      inverseRelations{ nodes{ type relatedIssue{ id identifier } } }
+    }
+  }
+}`;
+
+// ── Date helpers ───────────────────────────────────────────────────────────
+const MS = 86_400_000;
+const sod = d => { const r = new Date(d); r.setHours(0,0,0,0); return r; };
+const addD = (d, n) => new Date(d.getTime() + n * MS);
+const isWE = d => { const w = d.getDay(); return w === 0 || w === 6; };
+
+function addWork(d, n) {
+  let c = sod(d), a = 0;
+  while (a < n) { c = addD(c,1); if (!isWE(c)) a++; }
+  return c;
+}
+function nextWork(d) {
+  let c = addD(sod(d),1);
+  while (isWE(c)) c = addD(c,1);
+  return c;
+}
+function snapWork(d) {
+  let c = sod(d);
+  while (isWE(c)) c = addD(c,1);
+  return c;
+}
+
+// ── Schedule computation ───────────────────────────────────────────────────
+function buildSchedule(issues) {
+  const byId   = Object.fromEntries(issues.map(i => [i.id, i]));
+  const byIden = Object.fromEntries(issues.map(i => [i.identifier, i]));
+
+  // Build raw "A blocks B" edges from both relation directions
+  const rawEdges = []; // [{from: identifier, to: identifier}]
+  for (const iss of issues) {
+    for (const r of iss.relations?.nodes ?? []) {
+      if (r.type === 'blocks' && byIden[r.relatedIssue.identifier]) {
+        rawEdges.push({ from: iss.identifier, to: r.relatedIssue.identifier });
+      }
+    }
+    for (const r of iss.inverseRelations?.nodes ?? []) {
+      if (r.type === 'blocks' && byIden[r.relatedIssue.identifier]) {
+        rawEdges.push({ from: r.relatedIssue.identifier, to: iss.identifier });
+      }
+    }
+  }
+  // Deduplicate
+  const edgeSet = new Set(rawEdges.map(e => `${e.from}→${e.to}`));
+  const edges = [...edgeSet].map(k => { const [f,t] = k.split('→'); return {from:f,to:t}; });
+
+  // Cycle detection via DFS
+  const GRAY = 1, BLACK = 2;
+  const color = {};
+  const backEdges = new Set();
+  function dfs(n, path) {
+    color[n] = GRAY;
+    for (const { from, to } of edges) {
+      if (from !== n) continue;
+      if (color[to] === GRAY) { backEdges.add(`${n}→${to}`); }
+      else if (!color[to]) { path.push(to); dfs(to, path); path.pop(); }
+    }
+    color[n] = BLACK;
+  }
+  for (const iss of issues) if (!color[iss.identifier]) { dfs(iss.identifier, [iss.identifier]); }
+
+  // Warn about cycles (find them by walking back-edges)
+  const cycleWarnings = [];
+  for (const be of backEdges) {
+    const [a, b] = be.split('→');
+    cycleWarnings.push(`${a} → ${b} (back-edge removed)`);
+  }
+
+  // Clean edges (DAG after removing back-edges)
+  const dagEdges = edges.filter(e => !backEdges.has(`${e.from}→${e.to}`));
+
+  // Build adjacency and in-degree
+  const outgoing  = {};  // from → Set<to>
+  const incomingC = {};  // to   → Set<from>  (clean blockers)
+  for (const iss of issues) { outgoing[iss.identifier] = new Set(); incomingC[iss.identifier] = new Set(); }
+  for (const { from, to } of dagEdges) {
+    outgoing[from].add(to);
+    incomingC[to].add(from);
+  }
+
+  // Kahn topological sort
+  const inDeg = Object.fromEntries(issues.map(i => [i.identifier, incomingC[i.identifier].size]));
+  const queue = issues.filter(i => inDeg[i.identifier] === 0).map(i => i.identifier);
+  const topo  = [];
+  while (queue.length) {
+    const n = queue.shift();
+    topo.push(n);
+    for (const m of outgoing[n]) {
+      inDeg[m]--;
+      if (inDeg[m] === 0) queue.push(m);
+    }
+  }
+  for (const iss of issues) if (!topo.includes(iss.identifier)) topo.push(iss.identifier);
+
+  // ASAP scheduling
+  const today    = sod(new Date());
+  const projStart = snapWork(today);
+  const sched = {};
+
+  for (const id of topo) {
+    const iss = byIden[id];
+    if (!iss) continue;
+    const dur = Math.max(1, Math.round(iss.estimate ?? 1));
+
+    if (iss.completedAt && iss.startedAt) {
+      sched[id] = { start: sod(new Date(iss.startedAt)), end: sod(new Date(iss.completedAt)), real: true };
+    } else if (iss.startedAt) {
+      const s = sod(new Date(iss.startedAt));
+      sched[id] = { start: s, end: addWork(s, dur - 1), real: true };
+    } else {
+      let earliest = projStart;
+      for (const blocker of incomingC[id]) {
+        const bs = sched[blocker];
+        if (bs) { const c = nextWork(bs.end); if (c > earliest) earliest = c; }
+      }
+      const s = snapWork(earliest);
+      sched[id] = { start: s, end: addWork(s, dur - 1), real: false };
+    }
+  }
+
+  return { sched, topo, outgoing, cycleWarnings };
+}
+
+// ── State → color ──────────────────────────────────────────────────────────
+function stateColors(type) {
+  switch (type) {
+    case 'completed': return { fill: '#14532d', stroke: '#22c55e', text: '#86efac' };
+    case 'started':   return { fill: '#78350f', stroke: '#f59e0b', text: '#fcd34d' };
+    case 'canceled':  return { fill: '#1c1c2e', stroke: '#4b5563', text: '#6b7280' };
+    default:          return { fill: '#1e3a5f', stroke: '#3b82f6', text: '#93c5fd' };
+  }
+}
+
+// ── Gantt chart ────────────────────────────────────────────────────────────
+function GanttChart({ issues }) {
+  const [tip, setTip] = useState(null);
+
+  if (!issues.length) return (
+    <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', color:'#374151', fontSize:13 }}>
+      This milestone has no issues.
+    </div>
+  );
+
+  const { sched, topo, outgoing, cycleWarnings } = buildSchedule(issues);
+  const byIden = Object.fromEntries(issues.map(i => [i.identifier, i]));
+
+  // Date range
+  let minD = null, maxD = null;
+  for (const s of Object.values(sched)) {
+    if (!minD || s.start < minD) minD = s.start;
+    if (!maxD || s.end   > maxD) maxD = s.end;
+  }
+  const today = sod(new Date());
+  if (!minD) minD = today;
+  if (!maxD) maxD = addD(today, 30);
+  minD = addD(minD, -3);
+  maxD = addD(maxD, 7);
+
+  const nDays   = Math.ceil((maxD - minD) / MS) + 1;
+  const svgW    = nDays * DAY_W;
+  const svgH    = topo.length * ROW_H + HDR_H;
+  const rowIdx  = Object.fromEntries(topo.map((id,i) => [id,i]));
+
+  const dx = d => Math.floor((sod(d) - minD) / MS) * DAY_W;
+  const ry = i => HDR_H + i * ROW_H;
+
+  // Month header positions
+  const monthMarks = [];
+  let prevM = -1;
+  for (let i = 0; i < nDays; i++) {
+    const d = addD(minD, i);
+    if (d.getMonth() !== prevM) {
+      monthMarks.push({ x: i * DAY_W, label: d.toLocaleDateString('en', { month: 'short', year: 'numeric' }) });
+      prevM = d.getMonth();
+    }
+  }
+
+  // Week marks (Mondays)
+  const weekMarks = [];
+  for (let i = 0; i < nDays; i++) {
+    const d = addD(minD, i);
+    if (d.getDay() === 1) weekMarks.push({ x: i * DAY_W, day: d.getDate() });
+  }
+
+  // Weekend rects
+  const weekendXs = [];
+  for (let i = 0; i < nDays; i++) {
+    const d = addD(minD, i);
+    if (isWE(d)) weekendXs.push(i * DAY_W);
+  }
+
+  const todayX = dx(today);
+
+  // Bars
+  const bars = topo.map((id, i) => {
+    const iss = byIden[id];
+    const s   = sched[id];
+    if (!iss || !s) return null;
+    const x  = dx(s.start);
+    const x2 = dx(s.end) + DAY_W - 2;
+    const w  = Math.max(DAY_W - 2, x2 - x);
+    const y  = ry(i);
+    return { id, iss, x, w, y, s, c: stateColors(iss.state?.type) };
+  }).filter(Boolean);
+
+  // Arrows
+  const arrows = [];
+  for (const [fromId, toSet] of Object.entries(outgoing)) {
+    const fs = sched[fromId];
+    if (!fs) continue;
+    const fi = rowIdx[fromId];
+    if (fi === undefined) continue;
+    const ax1 = dx(fs.end) + DAY_W - 1;
+    const ay1 = ry(fi) + ROW_H / 2;
+    for (const toId of toSet) {
+      const ts = sched[toId];
+      const ti = rowIdx[toId];
+      if (!ts || ti === undefined) continue;
+      const ax2  = dx(ts.start);
+      const ay2  = ry(ti) + ROW_H / 2;
+      const ctrl = Math.max(40, Math.abs(ax2 - ax1) / 2);
+      arrows.push({ ax1, ay1, ax2, ay2, ctrl });
+    }
+  }
+
+  const fmt = d => d ? d.toLocaleDateString('en', { month:'short', day:'numeric', year:'numeric' }) : '—';
+
+  return (
+    <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
+      {cycleWarnings.length > 0 && (
+        <div className="cycle-warn">
+          ⚠ Dependency cycle(s) detected — schedule approximated. {cycleWarnings.join(' | ')}
+        </div>
+      )}
+      <div className="gantt-wrap">
+        <div className="gantt-inner">
+
+          {/* Sticky left labels */}
+          <div className="gantt-labels" style={{ width: LBL_W }}>
+            <div className="gantt-label-header" style={{ height: HDR_H }}>Issue</div>
+            {topo.map((id, i) => {
+              const iss = byIden[id];
+              if (!iss) return null;
+              const c = stateColors(iss.state?.type);
+              return (
+                <div
+                  key={id}
+                  className="gantt-label-row"
+                  style={{ height: ROW_H }}
+                  onClick={() => window.open(`https://linear.app/issue/${iss.identifier}`, '_blank')}
+                  title={iss.title}
+                >
+                  <span className="gantt-label-id" style={{ color: c.text }}>{iss.identifier}</span>
+                  <span className="gantt-label-title">{iss.title}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* SVG chart */}
+          <svg width={svgW} height={svgH} style={{ display:'block', flexShrink:0 }}>
+            <defs>
+              <marker id="ah" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">
+                <polygon points="0 0,7 2.5,0 5" fill="#7c3aed" opacity="0.75" />
+              </marker>
+            </defs>
+
+            {/* Weekend shading */}
+            {weekendXs.map(x => (
+              <rect key={x} x={x} y={0} width={DAY_W} height={svgH} fill="#070712" />
+            ))}
+
+            {/* Row dividers */}
+            {topo.map((_, i) => (
+              <line key={i} x1={0} y1={ry(i)} x2={svgW} y2={ry(i)} stroke="#111120" />
+            ))}
+            <line x1={0} y1={ry(topo.length)} x2={svgW} y2={ry(topo.length)} stroke="#111120" />
+
+            {/* Header background */}
+            <rect x={0} y={0} width={svgW} height={HDR_H} fill="#10101c" />
+            <line x1={0} y1={HDR_H} x2={svgW} y2={HDR_H} stroke="#1e1e30" />
+
+            {/* Month labels */}
+            {monthMarks.map(m => (
+              <text key={m.x} x={m.x+5} y={18} fill="#4b5563" fontSize={11} fontFamily="-apple-system,sans-serif">{m.label}</text>
+            ))}
+
+            {/* Week tick lines + day numbers */}
+            {weekMarks.map(w => (
+              <g key={w.x}>
+                <line x1={w.x} y1={24} x2={w.x} y2={HDR_H} stroke="#1e1e30" />
+                <text x={w.x+3} y={40} fill="#374151" fontSize={10} fontFamily="-apple-system,sans-serif">{w.day}</text>
+              </g>
+            ))}
+
+            {/* Today line */}
+            {todayX >= 0 && todayX <= svgW && (
+              <g>
+                <line x1={todayX} y1={0} x2={todayX} y2={svgH} stroke="#ef4444" strokeWidth={1} strokeDasharray="3 3" opacity={0.6} />
+                <text x={todayX+3} y={13} fill="#ef4444" fontSize={10} fontFamily="-apple-system,sans-serif">Today</text>
+              </g>
+            )}
+
+            {/* Arrows */}
+            {arrows.map((a, i) => (
+              <path
+                key={i}
+                d={`M ${a.ax1},${a.ay1} C ${a.ax1+a.ctrl},${a.ay1} ${a.ax2-a.ctrl},${a.ay2} ${a.ax2},${a.ay2}`}
+                fill="none" stroke="#7c3aed" strokeWidth={1.5} opacity={0.55}
+                markerEnd="url(#ah)"
+              />
+            ))}
+
+            {/* Bars */}
+            {bars.map(b => (
+              <g
+                key={b.id}
+                style={{ cursor:'pointer' }}
+                onMouseMove={e => setTip({ b, mx: e.clientX, my: e.clientY })}
+                onMouseLeave={() => setTip(null)}
+                onClick={() => window.open(`https://linear.app/issue/${b.iss.identifier}`, '_blank')}
+              >
+                <rect
+                  x={b.x+1} y={b.y+BAR_PAD} width={b.w} height={ROW_H-BAR_PAD*2}
+                  rx={3} fill={b.c.fill} stroke={b.c.stroke} strokeWidth={1}
+                />
+                {b.w > 28 && (
+                  <clipPath id={`cp-${b.id}`}>
+                    <rect x={b.x+1} y={b.y+BAR_PAD} width={b.w} height={ROW_H-BAR_PAD*2} />
+                  </clipPath>
+                )}
+                {b.w > 28 && (
+                  <text
+                    x={b.x+6} y={b.y+ROW_H/2+4}
+                    fill={b.c.text} fontSize={10.5} fontFamily="-apple-system,sans-serif"
+                    clipPath={`url(#cp-${b.id})`}
+                  >
+                    {b.iss.identifier}
+                  </text>
+                )}
+              </g>
+            ))}
+          </svg>
+        </div>
+      </div>
+
+      {/* Tooltip */}
+      {tip && (() => {
+        const { b, mx, my } = tip;
+        const { iss, s } = b;
+        return (
+          <div className="tt" style={{ left: mx+14, top: my-8 }}>
+            <div className="tt-name">{iss.identifier}: {iss.title}</div>
+            <div className="tt-row"><span className="tt-lbl">State</span><span className="tt-val">{iss.state?.name ?? '—'}</span></div>
+            <div className="tt-row"><span className="tt-lbl">Assignee</span><span className="tt-val">{iss.assignee?.displayName ?? 'Unassigned'}</span></div>
+            <div className="tt-row"><span className="tt-lbl">Estimate</span><span className="tt-val">{iss.estimate != null ? `${iss.estimate}d` : 'Not set'}</span></div>
+            <div className="tt-row"><span className="tt-lbl">Start</span><span className="tt-val">{fmt(s.start)}{s.real ? '' : ' ·computed'}</span></div>
+            <div className="tt-row"><span className="tt-lbl">End</span><span className="tt-val">{fmt(s.end)}{s.real ? '' : ' ·computed'}</span></div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// ── App shell ──────────────────────────────────────────────────────────────
+function App() {
+  const [apiKey,  setApiKey]  = useState(() => localStorage.getItem('lgk') ?? '');
+  const [keyDraft, setKeyDraft] = useState('');
+  const [keyErr,  setKeyErr]  = useState('');
+
+  const [teams,    setTeams]    = useState([]);
+  const [team,     setTeam]     = useState(null);
+  const [projects, setProjects] = useState([]);
+  const [project,  setProject]  = useState(null);
+  const [miles,    setMiles]    = useState([]);
+  const [mile,     setMile]     = useState(null);
+  const [issues,   setIssues]   = useState(null);
+
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState('');
+
+  function load(fn) {
+    setLoading(true); setError('');
+    fn().catch(e => setError(e.message)).finally(() => setLoading(false));
+  }
+
+  // Fetch teams on key change
+  useEffect(() => {
+    if (!apiKey) return;
+    load(() => gql(apiKey, Q_TEAMS).then(d => setTeams(d.teams.nodes)));
+  }, [apiKey]);
+
+  // Fetch projects on team change
+  useEffect(() => {
+    if (!team) return;
+    setProjects([]); setProject(null); setMiles([]); setMile(null); setIssues(null);
+    load(() => gql(apiKey, Q_PROJECTS, { id: team.id }).then(d => setProjects(d.team.projects.nodes)));
+  }, [team]);
+
+  // Fetch milestones on project change
+  useEffect(() => {
+    if (!project) return;
+    setMiles([]); setMile(null); setIssues(null);
+    load(() => gql(apiKey, Q_MILESTONES, { id: project.id }).then(d =>
+      setMiles([...d.project.projectMilestones.nodes].sort((a,b) => a.sortOrder - b.sortOrder))
+    ));
+  }, [project]);
+
+  // Fetch issues on milestone change
+  useEffect(() => {
+    if (!mile) return;
+    setIssues(null);
+    load(() => gql(apiKey, Q_ISSUES, { mid: mile.id }).then(d => setIssues(d.issues.nodes)));
+  }, [mile]);
+
+  function connectKey() {
+    const k = keyDraft.trim();
+    if (!k) return;
+    setKeyErr('');
+    setLoading(true);
+    gql(k, Q_TEAMS)
+      .then(d => {
+        localStorage.setItem('lgk', k);
+        setApiKey(k);
+        setTeams(d.teams.nodes);
+      })
+      .catch(e => setKeyErr(e.message))
+      .finally(() => setLoading(false));
+  }
+
+  function disconnect() {
+    localStorage.removeItem('lgk');
+    setApiKey(''); setKeyDraft('');
+    setTeams([]); setTeam(null); setProjects([]); setProject(null);
+    setMiles([]); setMile(null); setIssues(null); setError('');
+  }
+
+  function navTeam()    { setTeam(null); setProject(null); setMile(null); setIssues(null); }
+  function navProject() { setProject(null); setMile(null); setIssues(null); }
+  function navMile()    { setMile(null); setIssues(null); }
+
+  // ── Key gate ──
+  if (!apiKey) {
+    return (
+      <div className="app">
+        <div className="topbar">
+          <span className="topbar-title">Linear Gantt</span>
+          {loading && <div className="spinner" />}
+        </div>
+        <div className="key-gate">
+          <div className="key-card">
+            <h2>Connect to Linear</h2>
+            <p>
+              Create a <strong>Personal API key</strong> at<br />
+              <strong>Linear → Settings → API → Personal API keys</strong>.<br />
+              Your key is stored in <code style={{fontSize:11,color:'#818cf8'}}>localStorage</code> and never leaves your browser.
+            </p>
+            <input
+              className="key-input"
+              type="password"
+              placeholder="lin_api_xxxxxxxxxxxxxxxxxxxxxxxx"
+              value={keyDraft}
+              onChange={e => setKeyDraft(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && connectKey()}
+              autoFocus
+            />
+            <button className="btn-primary" onClick={connectKey} disabled={!keyDraft.trim() || loading}>
+              {loading ? 'Connecting…' : 'Connect'}
+            </button>
+            {keyErr && <div className="error-bar" style={{ marginTop:12, borderRadius:6 }}>{keyErr}</div>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Main UI ──
+  const showGantt = !!mile;
+
+  return (
+    <div className="app">
+      <div className="topbar">
+        <span className="topbar-title">Linear Gantt</span>
+        {loading && <div className="spinner" />}
+        <div className="topbar-spacer" />
+        <button className="btn-ghost" onClick={disconnect}>Disconnect</button>
+      </div>
+
+      {/* Breadcrumb */}
+      <div className="breadcrumb">
+        <span className={`bc-item ${!team ? 'current' : ''}`} onClick={navTeam}>Teams</span>
+        {team && <><span className="bc-sep">›</span>
+          <span className={`bc-item ${!project ? 'current' : ''}`} onClick={navProject}>{team.name}</span></>}
+        {project && <><span className="bc-sep">›</span>
+          <span className={`bc-item ${!mile ? 'current' : ''}`} onClick={navMile}>{project.name}</span></>}
+        {mile && <><span className="bc-sep">›</span>
+          <span className="bc-item current">{mile.name}</span></>}
+      </div>
+
+      {error && <div className="error-bar">{error}</div>}
+
+      <div className="content">
+        {!showGantt && (
+          <>
+            {/* Teams */}
+            <div className="panel">
+              <div className="panel-header">Teams</div>
+              <div className="panel-list">
+                {teams.length === 0 && !loading && <div className="panel-empty">No teams found.</div>}
+                {teams.map(t => (
+                  <div key={t.id} className={`panel-item ${team?.id===t.id?'sel':''}`} onClick={() => setTeam(t)}>
+                    <span className="panel-item-key">{t.key}</span>{t.name}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Projects */}
+            {team && (
+              <div className="panel">
+                <div className="panel-header">Projects — {team.name}</div>
+                <div className="panel-list">
+                  {projects.length === 0 && !loading && <div className="panel-empty">No projects.</div>}
+                  {projects.map(p => (
+                    <div key={p.id} className={`panel-item ${project?.id===p.id?'sel':''}`} onClick={() => setProject(p)}>
+                      {p.name}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Milestones */}
+            {project && (
+              <div className="panel">
+                <div className="panel-header">Milestones — {project.name}</div>
+                <div className="panel-list">
+                  {miles.length === 0 && !loading && <div className="panel-empty">No milestones.</div>}
+                  {miles.map(m => (
+                    <div key={m.id} className={`panel-item ${mile?.id===m.id?'sel':''}`} onClick={() => setMile(m)}>
+                      {m.name}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Placeholder */}
+            <div className="placeholder">
+              {!team    && 'Select a team to get started'}
+              {team && !project && !loading  && 'Select a project'}
+              {project && !mile && !loading  && 'Select a milestone to view the Gantt chart'}
+            </div>
+          </>
+        )}
+
+        {showGantt && (
+          <>
+            {!issues && loading && (
+              <div className="loading-row" style={{ flex:1 }}>
+                <div className="spinner" />Loading issues…
+              </div>
+            )}
+            {issues !== null && <GanttChart issues={issues} />}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
