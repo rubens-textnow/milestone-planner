@@ -18,6 +18,7 @@ export interface Milestone {
 }
 
 export interface IssueRelation {
+  id: string
   type: string
   relatedIssue: { id: string; identifier: string }
 }

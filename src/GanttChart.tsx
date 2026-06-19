@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import type { Issue } from './types'
 import { buildSchedule, stateColors, sod, addD, isWE, MS } from './schedule'
+import { gql, M_CREATE_RELATION, M_DELETE_RELATION } from './api'
 import IssueDetail from './IssueDetail'
 
 const ROW_H = 36
@@ -8,6 +9,7 @@ const DAY_W = 26
 const HDR_H = 46
 const LBL_W = 264
 const BAR_PAD = 5
+const HANDLE_W = 8  // hot-zone width for drag handles on each side of a bar
 
 interface TooltipState {
   b: Bar
@@ -16,7 +18,7 @@ interface TooltipState {
 }
 
 interface Bar {
-  id: string
+  id: string        // identifier
   iss: Issue
   x: number
   w: number
@@ -25,12 +27,39 @@ interface Bar {
   c: { fill: string; stroke: string; text: string }
 }
 
+interface DragState {
+  fromIden: string  // identifier of source bar
+  side: 'left' | 'right'
+  mx: number
+  my: number
+}
+
+interface ArrowMeta {
+  ax1: number; ay1: number
+  ax2: number; ay2: number
+  ctrl: number
+  // relation info for deletion
+  relationId: string
+  blockerIden: string  // the "from" (blocker)
+  blockedIden: string  // the "to"  (blocked)
+}
+
 const fmt = (d: Date | null) =>
   d ? d.toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
 
-export default function GanttChart({ issues }: { issues: Issue[] }) {
+interface Props {
+  issues: Issue[]
+  apiKey: string
+  onRefresh: () => void
+}
+
+export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
   const [tip, setTip] = useState<TooltipState | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [drag, setDrag] = useState<DragState | null>(null)
+  const [hoveredArrow, setHoveredArrow] = useState<string | null>(null) // relationId
+  const [working, setWorking] = useState(false)
+  const svgRef = useRef<SVGSVGElement>(null)
 
   if (!issues.length) return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#374151', fontSize: 13 }}>
@@ -44,19 +73,27 @@ export default function GanttChart({ issues }: { issues: Issue[] }) {
 
   const selectedIssue = selectedId ? issues.find(i => i.identifier === selectedId) ?? null : null
 
-  // Build blocked-by / blocks maps
+  // blocked-by / blocks maps
   const blockedByMap: Record<string, Issue[]> = {}
   const blocksMap: Record<string, Issue[]> = {}
-  for (const iss of issues) {
-    blockedByMap[iss.identifier] = []
-    blocksMap[iss.identifier] = []
-  }
+  for (const iss of issues) { blockedByMap[iss.identifier] = []; blocksMap[iss.identifier] = [] }
   for (const iss of issues) {
     for (const r of iss.relations?.nodes ?? []) {
       if (r.type === 'blocks' && byId[r.relatedIssue.id]) {
         blocksMap[iss.identifier].push(byId[r.relatedIssue.id])
         blockedByMap[r.relatedIssue.identifier]?.push(iss)
       }
+    }
+  }
+
+  // Build a lookup: "blockerIden→blockedIden" → relationId
+  const relationLookup: Record<string, string> = {}
+  for (const iss of issues) {
+    for (const r of iss.relations?.nodes ?? []) {
+      if (r.type === 'blocks') relationLookup[`${iss.identifier}→${r.relatedIssue.identifier}`] = r.id
+    }
+    for (const r of iss.inverseRelations?.nodes ?? []) {
+      if (r.type === 'blocks') relationLookup[`${r.relatedIssue.identifier}→${iss.identifier}`] = r.id
     }
   }
 
@@ -113,8 +150,9 @@ export default function GanttChart({ issues }: { issues: Issue[] }) {
     const y = ry(rowIdx[id])
     return [{ id, iss, x, w, y, s, c: stateColors(iss.state?.type) }]
   })
+  const barByIden = Object.fromEntries(bars.map(b => [b.id, b]))
 
-  const arrows: { ax1: number; ay1: number; ax2: number; ay2: number; ctrl: number }[] = []
+  const arrows: ArrowMeta[] = []
   for (const [fromId, toSet] of Object.entries(outgoing)) {
     const fs = sched[fromId]
     if (!fs) continue
@@ -129,26 +167,112 @@ export default function GanttChart({ issues }: { issues: Issue[] }) {
       const ax2 = dx(ts.start)
       const ay2 = ry(ti) + ROW_H / 2
       const ctrl = Math.max(40, Math.abs(ax2 - ax1) / 2)
-      arrows.push({ ax1, ay1, ax2, ay2, ctrl })
+      const relationId = relationLookup[`${fromId}→${toId}`] ?? ''
+      arrows.push({ ax1, ay1, ax2, ay2, ctrl, relationId, blockerIden: fromId, blockedIden: toId })
     }
   }
 
   function handleSelect(identifier: string) {
+    if (drag) return
     setTip(null)
     setSelectedId(prev => prev === identifier ? null : identifier)
+  }
+
+  // ── Drag-to-link ──────────────────────────────────────────────────────────
+
+  function svgPoint(e: React.MouseEvent): { x: number; y: number } | null {
+    if (!svgRef.current) return null
+    const rect = svgRef.current.getBoundingClientRect()
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  }
+
+  function barAtPoint(x: number, y: number): Bar | null {
+    for (const b of bars) {
+      if (x >= b.x && x <= b.x + b.w && y >= b.y + BAR_PAD && y <= b.y + ROW_H - BAR_PAD) return b
+      // also hit the full row height so it's easier to target
+      if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + ROW_H) return b
+    }
+    return null
+  }
+
+  const onMouseMoveSvg = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    if (!drag) return
+    setDrag(prev => prev ? { ...prev, mx: e.clientX, my: e.clientY } : null)
+  }, [drag])
+
+  const onMouseUpSvg = useCallback(async (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!drag) return
+    const pt = svgPoint(e)
+    const target = pt ? barAtPoint(pt.x, pt.y) : null
+
+    if (target && target.id !== drag.fromIden) {
+      // drag.side === 'right'  → fromIden BLOCKS target
+      // drag.side === 'left'   → target BLOCKS fromIden
+      const blocker = drag.side === 'right' ? drag.fromIden : target.id
+      const blocked = drag.side === 'right' ? target.id : drag.fromIden
+
+      // Skip if relation already exists
+      if (!relationLookup[`${blocker}→${blocked}`]) {
+        const blockerIssue = byIden[blocker]
+        const blockedIssue = byIden[blocked]
+        if (blockerIssue && blockedIssue) {
+          setWorking(true)
+          try {
+            await gql(apiKey, M_CREATE_RELATION, {
+              issueId: blockerIssue.id,
+              relatedIssueId: blockedIssue.id,
+              type: 'blocks',
+            })
+            onRefresh()
+          } catch (err) {
+            console.error(err)
+          } finally {
+            setWorking(false)
+          }
+        }
+      }
+    }
+
+    setDrag(null)
+  }, [drag, bars, byIden, apiKey, onRefresh, relationLookup])
+
+  async function deleteRelation(relationId: string) {
+    if (!relationId || working) return
+    setWorking(true)
+    try {
+      await gql(apiKey, M_DELETE_RELATION, { id: relationId })
+      onRefresh()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  // drag preview line coords (in SVG space)
+  let previewLine: { x1: number; y1: number; x2: number; y2: number } | null = null
+  if (drag && svgRef.current) {
+    const rect = svgRef.current.getBoundingClientRect()
+    const srcBar = barByIden[drag.fromIden]
+    if (srcBar) {
+      const x1 = drag.side === 'right' ? srcBar.x + srcBar.w : srcBar.x
+      const y1 = srcBar.y + ROW_H / 2
+      previewLine = { x1, y1, x2: drag.mx - rect.left, y2: drag.my - rect.top }
+    }
   }
 
   return (
     <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
       {/* Gantt pane */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-        {cycleWarnings.length > 0 && (
-          <div className="cycle-warn">
-            ⚠ Dependency cycle(s) detected — schedule approximated. {cycleWarnings.join(' | ')}
+        {(cycleWarnings.length > 0 || working) && (
+          <div className="cycle-warn" style={working ? { background: '#1a1535', borderColor: '#4c1d95', color: '#c4b5fd' } : {}}>
+            {working ? 'Saving…' : `⚠ Dependency cycle(s) detected — schedule approximated. ${cycleWarnings.join(' | ')}`}
           </div>
         )}
         <div className="gantt-wrap">
           <div className="gantt-inner">
+            {/* Sticky labels */}
             <div className="gantt-labels" style={{ width: LBL_W }}>
               <div className="gantt-label-header" style={{ height: HDR_H }}>Issue</div>
               {topo.map(id => {
@@ -171,17 +295,33 @@ export default function GanttChart({ issues }: { issues: Issue[] }) {
               })}
             </div>
 
-            <svg width={svgW} height={svgH} style={{ display: 'block', flexShrink: 0 }}>
+            {/* SVG */}
+            <svg
+              ref={svgRef}
+              width={svgW} height={svgH}
+              style={{ display: 'block', flexShrink: 0, cursor: drag ? 'crosshair' : 'default' }}
+              onMouseMove={onMouseMoveSvg}
+              onMouseUp={onMouseUpSvg}
+              onMouseLeave={() => { if (drag) setDrag(null) }}
+            >
               <defs>
                 <marker id="ah" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">
                   <polygon points="0 0,7 2.5,0 5" fill="#7c3aed" opacity="0.75" />
                 </marker>
+                <marker id="ah-del" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">
+                  <polygon points="0 0,7 2.5,0 5" fill="#ef4444" opacity="0.9" />
+                </marker>
+                <marker id="ah-preview" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">
+                  <polygon points="0 0,7 2.5,0 5" fill="#a78bfa" />
+                </marker>
               </defs>
 
+              {/* Weekend shading */}
               {weekendXs.map(x => (
                 <rect key={x} x={x} y={0} width={DAY_W} height={svgH} fill="#070712" />
               ))}
 
+              {/* Row highlight + click target */}
               {topo.map((id, i) => (
                 <rect
                   key={id}
@@ -192,18 +332,19 @@ export default function GanttChart({ issues }: { issues: Issue[] }) {
                 />
               ))}
 
+              {/* Row dividers */}
               {topo.map((_, i) => (
                 <line key={i} x1={0} y1={ry(i)} x2={svgW} y2={ry(i)} stroke="#111120" />
               ))}
               <line x1={0} y1={ry(topo.length)} x2={svgW} y2={ry(topo.length)} stroke="#111120" />
 
+              {/* Header */}
               <rect x={0} y={0} width={svgW} height={HDR_H} fill="#10101c" />
               <line x1={0} y1={HDR_H} x2={svgW} y2={HDR_H} stroke="#1e1e30" />
 
               {monthMarks.map(m => (
                 <text key={m.x} x={m.x + 5} y={18} fill="#4b5563" fontSize={11} fontFamily="-apple-system,sans-serif">{m.label}</text>
               ))}
-
               {weekMarks.map(w => (
                 <g key={w.x}>
                   <line x1={w.x} y1={24} x2={w.x} y2={HDR_H} stroke="#1e1e30" />
@@ -211,6 +352,7 @@ export default function GanttChart({ issues }: { issues: Issue[] }) {
                 </g>
               ))}
 
+              {/* Today line */}
               {todayX >= 0 && todayX <= svgW && (
                 <g>
                   <line x1={todayX} y1={0} x2={todayX} y2={svgH} stroke="#ef4444" strokeWidth={1} strokeDasharray="3 3" opacity={0.6} />
@@ -218,52 +360,121 @@ export default function GanttChart({ issues }: { issues: Issue[] }) {
                 </g>
               )}
 
-              {arrows.map((a, i) => (
-                <path
-                  key={i}
-                  d={`M ${a.ax1},${a.ay1} C ${a.ax1 + a.ctrl},${a.ay1} ${a.ax2 - a.ctrl},${a.ay2} ${a.ax2},${a.ay2}`}
-                  fill="none" stroke="#7c3aed" strokeWidth={1.5} opacity={0.55}
-                  markerEnd="url(#ah)"
-                />
-              ))}
-
-              {bars.map(b => {
-                const isSelected = selectedId === b.id
+              {/* Dependency arrows — clickable to delete */}
+              {arrows.map((a, i) => {
+                const isHov = hoveredArrow === a.relationId
+                const d = `M ${a.ax1},${a.ay1} C ${a.ax1 + a.ctrl},${a.ay1} ${a.ax2 - a.ctrl},${a.ay2} ${a.ax2},${a.ay2}`
                 return (
-                  <g
-                    key={b.id}
-                    style={{ cursor: 'pointer' }}
-                    onMouseMove={e => setTip({ b, mx: e.clientX, my: e.clientY })}
-                    onMouseLeave={() => setTip(null)}
-                    onClick={() => handleSelect(b.iss.identifier)}
-                  >
-                    <rect
-                      x={b.x + 1} y={b.y + BAR_PAD} width={b.w} height={ROW_H - BAR_PAD * 2}
-                      rx={3} fill={b.c.fill} stroke={b.c.stroke} strokeWidth={isSelected ? 2 : 1}
-                      opacity={isSelected ? 1 : 0.85}
+                  <g key={i} style={{ cursor: a.relationId ? 'pointer' : 'default' }}>
+                    {/* wide invisible hit area */}
+                    <path d={d} fill="none" stroke="transparent" strokeWidth={12}
+                      onMouseEnter={() => setHoveredArrow(a.relationId)}
+                      onMouseLeave={() => setHoveredArrow(null)}
+                      onClick={() => a.relationId && deleteRelation(a.relationId)}
                     />
-                    {b.w > 28 && (
-                      <clipPath id={`cp-${b.id}`}>
-                        <rect x={b.x + 1} y={b.y + BAR_PAD} width={b.w} height={ROW_H - BAR_PAD * 2} />
-                      </clipPath>
-                    )}
-                    {b.w > 28 && (
+                    <path
+                      d={d}
+                      fill="none"
+                      stroke={isHov ? '#ef4444' : '#7c3aed'}
+                      strokeWidth={isHov ? 2 : 1.5}
+                      opacity={isHov ? 0.9 : 0.55}
+                      markerEnd={isHov ? 'url(#ah-del)' : 'url(#ah)'}
+                      style={{ pointerEvents: 'none' }}
+                    />
+                    {isHov && (
                       <text
-                        x={b.x + 6} y={b.y + ROW_H / 2 + 4}
-                        fill={b.c.text} fontSize={10.5} fontFamily="-apple-system,sans-serif"
-                        clipPath={`url(#cp-${b.id})`}
+                        x={(a.ax1 + a.ax2) / 2} y={(a.ay1 + a.ay2) / 2 - 6}
+                        fill="#ef4444" fontSize={9.5} fontFamily="-apple-system,sans-serif"
+                        textAnchor="middle" style={{ pointerEvents: 'none' }}
                       >
-                        {b.iss.identifier}
+                        click to remove
                       </text>
                     )}
                   </g>
                 )
               })}
+
+              {/* Bars */}
+              {bars.map(b => {
+                const isSelected = selectedId === b.id
+                return (
+                  <g key={b.id}>
+                    {/* Bar body */}
+                    <g
+                      style={{ cursor: 'pointer' }}
+                      onMouseMove={e => { if (!drag) setTip({ b, mx: e.clientX, my: e.clientY }) }}
+                      onMouseLeave={() => setTip(null)}
+                      onClick={() => handleSelect(b.iss.identifier)}
+                    >
+                      <rect
+                        x={b.x + 1} y={b.y + BAR_PAD} width={b.w} height={ROW_H - BAR_PAD * 2}
+                        rx={3} fill={b.c.fill} stroke={b.c.stroke} strokeWidth={isSelected ? 2 : 1}
+                        opacity={isSelected ? 1 : 0.85}
+                      />
+                      {b.w > 28 && (
+                        <clipPath id={`cp-${b.id}`}>
+                          <rect x={b.x + 1} y={b.y + BAR_PAD} width={b.w} height={ROW_H - BAR_PAD * 2} />
+                        </clipPath>
+                      )}
+                      {b.w > 28 && (
+                        <text
+                          x={b.x + 6} y={b.y + ROW_H / 2 + 4}
+                          fill={b.c.text} fontSize={10.5} fontFamily="-apple-system,sans-serif"
+                          clipPath={`url(#cp-${b.id})`}
+                        >
+                          {b.iss.identifier}
+                        </text>
+                      )}
+                    </g>
+
+                    {/* Right handle — drag out means "this blocks something" */}
+                    <rect
+                      x={b.x + b.w - HANDLE_W + 2} y={b.y + BAR_PAD}
+                      width={HANDLE_W} height={ROW_H - BAR_PAD * 2}
+                      rx={3} fill="#7c3aed" opacity={drag?.fromIden === b.id && drag.side === 'right' ? 0.9 : 0}
+                      style={{ cursor: 'crosshair' }}
+                      onMouseEnter={e => { e.currentTarget.style.opacity = '0.5'; setTip(null) }}
+                      onMouseLeave={e => { e.currentTarget.style.opacity = drag?.fromIden === b.id ? '0.9' : '0' }}
+                      onMouseDown={e => {
+                        e.stopPropagation()
+                        setDrag({ fromIden: b.id, side: 'right', mx: e.clientX, my: e.clientY })
+                        setTip(null)
+                      }}
+                    />
+
+                    {/* Left handle — drag out means "something blocks this" */}
+                    <rect
+                      x={b.x + 1} y={b.y + BAR_PAD}
+                      width={HANDLE_W} height={ROW_H - BAR_PAD * 2}
+                      rx={3} fill="#7c3aed" opacity={drag?.fromIden === b.id && drag.side === 'left' ? 0.9 : 0}
+                      style={{ cursor: 'crosshair' }}
+                      onMouseEnter={e => { e.currentTarget.style.opacity = '0.5'; setTip(null) }}
+                      onMouseLeave={e => { e.currentTarget.style.opacity = drag?.fromIden === b.id ? '0.9' : '0' }}
+                      onMouseDown={e => {
+                        e.stopPropagation()
+                        setDrag({ fromIden: b.id, side: 'left', mx: e.clientX, my: e.clientY })
+                        setTip(null)
+                      }}
+                    />
+                  </g>
+                )
+              })}
+
+              {/* Preview line while dragging */}
+              {previewLine && (
+                <line
+                  x1={previewLine.x1} y1={previewLine.y1}
+                  x2={previewLine.x2} y2={previewLine.y2}
+                  stroke="#a78bfa" strokeWidth={1.5} strokeDasharray="5 3"
+                  markerEnd="url(#ah-preview)"
+                  style={{ pointerEvents: 'none' }}
+                />
+              )}
             </svg>
           </div>
         </div>
 
-        {tip && !selectedIssue && (() => {
+        {tip && !selectedIssue && !drag && (() => {
           const { b, mx, my } = tip
           const { iss, s } = b
           return (

@@ -25,6 +25,16 @@ export const Q_MILESTONES = `query($id:String!){
   project(id:$id){ projectMilestones(first:250){ nodes{ id name sortOrder } } }
 }`
 
+export const M_CREATE_RELATION = `mutation($issueId:String!, $relatedIssueId:String!, $type:IssueRelationType!){
+  issueRelationCreate(input:{ issueId:$issueId, relatedIssueId:$relatedIssueId, type:$type }){
+    success
+  }
+}`
+
+export const M_DELETE_RELATION = `mutation($id:String!){
+  issueRelationDelete(id:$id){ success }
+}`
+
 export const Q_ISSUES = `query($mid:ID!){
   issues(first:250, filter:{ projectMilestone:{ id:{ eq:$mid } } }){
     nodes{
@@ -32,8 +42,8 @@ export const Q_ISSUES = `query($mid:ID!){
       createdAt startedAt completedAt dueDate
       state{ name type }
       assignee{ displayName }
-      relations       { nodes{ type relatedIssue{ id identifier } } }
-      inverseRelations{ nodes{ type relatedIssue{ id identifier } } }
+      relations       { nodes{ id type relatedIssue{ id identifier } } }
+      inverseRelations{ nodes{ id type relatedIssue{ id identifier } } }
     }
   }
 }`

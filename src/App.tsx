@@ -64,6 +64,13 @@ export default function App() {
       .then(d => setIssues(d.issues.nodes)))
   }, [milestoneId, apiKey])
 
+  function refreshIssues() {
+    if (!milestoneId || !apiKey) return
+    gql<{ issues: { nodes: Issue[] } }>(apiKey, Q_ISSUES, { mid: milestoneId })
+      .then(d => setIssues(d.issues.nodes))
+      .catch(e => setError((e as Error).message))
+  }
+
   function connectKey() {
     const k = keyDraft.trim()
     if (!k) return
@@ -253,7 +260,7 @@ export default function App() {
                 <div className="spinner" />Loading issues…
               </div>
             )}
-            {issues !== null && <GanttChart issues={issues} />}
+            {issues !== null && <GanttChart issues={issues} apiKey={apiKey} onRefresh={refreshIssues} />}
           </>
         )}
       </div>
