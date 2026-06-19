@@ -26,6 +26,7 @@ export interface Issue {
   id: string
   identifier: string
   title: string
+  description: string | null
   estimate: number | null
   createdAt: string | null
   startedAt: string | null

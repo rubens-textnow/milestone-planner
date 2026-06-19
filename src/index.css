@@ -73,3 +73,27 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 
 /* ── Cycle warning ── */
 .cycle-warn { background: #431407; border-top: 1px solid #7c2d12; color: #fdba74; padding: 6px 16px; font-size: 11.5px; flex-shrink: 0; }
+
+/* ── Gantt row selected ── */
+.gantt-label-row-sel { background: #1a1535 !important; border-left: 3px solid #7c3aed; padding-left: 9px; }
+
+/* ── Issue detail panel ── */
+.detail-panel { width: 50%; border-left: 1px solid #1e1e30; background: #0f0f1c; display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; }
+.detail-header { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid #1e1e30; flex-shrink: 0; }
+.detail-identifier { font-family: monospace; font-size: 12px; font-weight: 600; }
+.detail-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.detail-close { background: none; border: none; color: #4b5563; font-size: 14px; cursor: pointer; padding: 2px 6px; border-radius: 4px; line-height: 1; transition: color 0.1s; }
+.detail-close:hover { color: #e2e8f0; }
+.detail-title { padding: 14px 16px 10px; font-size: 14px; font-weight: 600; color: #f1f5f9; line-height: 1.5; border-bottom: 1px solid #1a1a28; }
+.detail-description { padding: 10px 16px 14px; font-size: 12.5px; color: #94a3b8; line-height: 1.65; white-space: pre-wrap; border-bottom: 1px solid #1a1a28; }
+.detail-section { padding: 12px 16px; border-bottom: 1px solid #1a1a28; }
+.detail-section-title { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #4b5563; margin-bottom: 8px; }
+.detail-row { display: flex; gap: 12px; margin-top: 6px; align-items: center; }
+.detail-lbl { color: #6b7280; font-size: 12px; width: 72px; flex-shrink: 0; }
+.detail-val { color: #cbd5e1; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.detail-computed { color: #4b5563; font-size: 11px; }
+.detail-state-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.detail-dep-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; transition: background 0.1s; margin-top: 4px; }
+.detail-dep-item:hover { background: #1a1a2e; }
+.detail-dep-id { font-family: monospace; font-size: 11px; flex-shrink: 0; }
+.detail-dep-title { font-size: 12px; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

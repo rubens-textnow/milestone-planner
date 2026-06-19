@@ -28,7 +28,7 @@ export const Q_MILESTONES = `query($id:String!){
 export const Q_ISSUES = `query($mid:ID!){
   issues(first:250, filter:{ projectMilestone:{ id:{ eq:$mid } } }){
     nodes{
-      id identifier title estimate
+      id identifier title description estimate
       createdAt startedAt completedAt dueDate
       state{ name type }
       assignee{ displayName }

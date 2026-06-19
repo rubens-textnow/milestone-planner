@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import type { Team, Project, Milestone, Issue } from './types'
 import { gql, Q_TEAMS, Q_PROJECTS, Q_MILESTONES, Q_ISSUES } from './api'
 import GanttChart from './GanttChart'
@@ -9,11 +10,8 @@ export default function App() {
   const [keyErr, setKeyErr] = useState('')
 
   const [teams, setTeams] = useState<Team[]>([])
-  const [team, setTeam] = useState<Team | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
-  const [project, setProject] = useState<Project | null>(null)
   const [miles, setMiles] = useState<Milestone[]>([])
-  const [mile, setMile] = useState<Milestone | null>(null)
   const [issues, setIssues] = useState<Issue[] | null>(null)
 
   const [teamSearch, setTeamSearch] = useState('')
@@ -22,36 +20,49 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  const [searchParams, setSearchParams] = useSearchParams()
+  const teamId = searchParams.get('team')
+  const projectId = searchParams.get('project')
+  const milestoneId = searchParams.get('milestone')
+
+  const team = teams.find(t => t.id === teamId) ?? null
+  const project = projects.find(p => p.id === projectId) ?? null
+  const mile = miles.find(m => m.id === milestoneId) ?? null
+
   function load(fn: () => Promise<void>) {
     setLoading(true); setError('')
     fn().catch(e => setError((e as Error).message)).finally(() => setLoading(false))
   }
 
+  // Fetch teams on key change
   useEffect(() => {
     if (!apiKey) return
     load(() => gql<{ teams: { nodes: Team[] } }>(apiKey, Q_TEAMS).then(d => setTeams(d.teams.nodes)))
   }, [apiKey])
 
+  // Fetch projects when teamId changes
   useEffect(() => {
-    if (!team) return
-    setProjects([]); setProject(null); setMiles([]); setMile(null); setIssues(null)
-    load(() => gql<{ team: { projects: { nodes: Project[] } } }>(apiKey, Q_PROJECTS, { id: team.id })
+    if (!teamId || !apiKey) { setProjects([]); return }
+    setProjects([])
+    load(() => gql<{ team: { projects: { nodes: Project[] } } }>(apiKey, Q_PROJECTS, { id: teamId })
       .then(d => setProjects(d.team.projects.nodes)))
-  }, [team])
+  }, [teamId, apiKey])
 
+  // Fetch milestones when projectId changes
   useEffect(() => {
-    if (!project) return
-    setMiles([]); setMile(null); setIssues(null)
-    load(() => gql<{ project: { projectMilestones: { nodes: Milestone[] } } }>(apiKey, Q_MILESTONES, { id: project.id })
+    if (!projectId || !apiKey) { setMiles([]); return }
+    setMiles([])
+    load(() => gql<{ project: { projectMilestones: { nodes: Milestone[] } } }>(apiKey, Q_MILESTONES, { id: projectId })
       .then(d => setMiles([...d.project.projectMilestones.nodes].sort((a, b) => a.sortOrder - b.sortOrder))))
-  }, [project])
+  }, [projectId, apiKey])
 
+  // Fetch issues when milestoneId changes
   useEffect(() => {
-    if (!mile) return
+    if (!milestoneId || !apiKey) { setIssues(null); return }
     setIssues(null)
-    load(() => gql<{ issues: { nodes: Issue[] } }>(apiKey, Q_ISSUES, { mid: mile.id })
+    load(() => gql<{ issues: { nodes: Issue[] } }>(apiKey, Q_ISSUES, { mid: milestoneId })
       .then(d => setIssues(d.issues.nodes)))
-  }, [mile])
+  }, [milestoneId, apiKey])
 
   function connectKey() {
     const k = keyDraft.trim()
@@ -71,8 +82,8 @@ export default function App() {
   function disconnect() {
     localStorage.removeItem('lgk')
     setApiKey(''); setKeyDraft('')
-    setTeams([]); setTeam(null); setProjects([]); setProject(null)
-    setMiles([]); setMile(null); setIssues(null); setError('')
+    setTeams([]); setProjects([]); setMiles([]); setIssues(null); setError('')
+    setSearchParams({})
   }
 
   function toggleFavorite(id: string, e: React.MouseEvent) {
@@ -83,9 +94,21 @@ export default function App() {
     else localStorage.removeItem('lgk-fav-team')
   }
 
-  function navTeam() { setTeam(null); setProject(null); setMile(null); setIssues(null) }
-  function navProject() { setProject(null); setMile(null); setIssues(null) }
-  function navMile() { setMile(null); setIssues(null) }
+  function selectTeam(t: Team) {
+    setSearchParams({ team: t.id })
+  }
+
+  function selectProject(p: Project) {
+    setSearchParams({ team: teamId!, project: p.id })
+  }
+
+  function selectMilestone(m: Milestone) {
+    setSearchParams({ team: teamId!, project: projectId!, milestone: m.id })
+  }
+
+  function navTeam() { setSearchParams({}) }
+  function navProject() { setSearchParams({ team: teamId! }) }
+  function navMile() { setSearchParams({ team: teamId!, project: projectId! }) }
 
   if (!apiKey) {
     return (
@@ -121,7 +144,7 @@ export default function App() {
     )
   }
 
-  const showGantt = !!mile
+  const showGantt = !!milestoneId
 
   return (
     <div className="app">
@@ -133,11 +156,11 @@ export default function App() {
       </div>
 
       <div className="breadcrumb">
-        <span className={`bc-item ${!team ? 'current' : ''}`} onClick={navTeam}>Teams</span>
+        <span className={`bc-item ${!teamId ? 'current' : ''}`} onClick={navTeam}>Teams</span>
         {team && <><span className="bc-sep">›</span>
-          <span className={`bc-item ${!project ? 'current' : ''}`} onClick={navProject}>{team.name}</span></>}
+          <span className={`bc-item ${!projectId ? 'current' : ''}`} onClick={navProject}>{team.name}</span></>}
         {project && <><span className="bc-sep">›</span>
-          <span className={`bc-item ${!mile ? 'current' : ''}`} onClick={navMile}>{project.name}</span></>}
+          <span className={`bc-item ${!milestoneId ? 'current' : ''}`} onClick={navMile}>{project.name}</span></>}
         {mile && <><span className="bc-sep">›</span>
           <span className="bc-item current">{mile.name}</span></>}
       </div>
@@ -172,7 +195,7 @@ export default function App() {
                     return <div className="panel-empty">No teams match "{teamSearch}".</div>
                   }
                   return sorted.map(t => (
-                    <div key={t.id} className={`panel-item ${team?.id === t.id ? 'sel' : ''}`} onClick={() => setTeam(t)}>
+                    <div key={t.id} className={`panel-item ${teamId === t.id ? 'sel' : ''}`} onClick={() => selectTeam(t)}>
                       <span className="panel-item-key">{t.key}</span>
                       <span style={{ flex: 1 }}>{t.name}</span>
                       <button
@@ -186,13 +209,13 @@ export default function App() {
               </div>
             </div>
 
-            {team && (
+            {teamId && (
               <div className="panel">
-                <div className="panel-header">Projects — {team.name}</div>
+                <div className="panel-header">Projects — {team?.name}</div>
                 <div className="panel-list">
                   {projects.length === 0 && !loading && <div className="panel-empty">No projects.</div>}
                   {projects.map(p => (
-                    <div key={p.id} className={`panel-item ${project?.id === p.id ? 'sel' : ''}`} onClick={() => setProject(p)}>
+                    <div key={p.id} className={`panel-item ${projectId === p.id ? 'sel' : ''}`} onClick={() => selectProject(p)}>
                       <span className="project-icon" style={{ background: p.color ?? '#374151' }} />
                       {p.name}
                     </div>
@@ -201,13 +224,13 @@ export default function App() {
               </div>
             )}
 
-            {project && (
+            {projectId && (
               <div className="panel">
-                <div className="panel-header">Milestones — {project.name}</div>
+                <div className="panel-header">Milestones — {project?.name}</div>
                 <div className="panel-list">
                   {miles.length === 0 && !loading && <div className="panel-empty">No milestones.</div>}
                   {miles.map(m => (
-                    <div key={m.id} className={`panel-item ${mile?.id === m.id ? 'sel' : ''}`} onClick={() => setMile(m)}>
+                    <div key={m.id} className={`panel-item ${milestoneId === m.id ? 'sel' : ''}`} onClick={() => selectMilestone(m)}>
                       {m.name}
                     </div>
                   ))}
@@ -216,9 +239,9 @@ export default function App() {
             )}
 
             <div className="placeholder">
-              {!team && 'Select a team to get started'}
-              {team && !project && !loading && 'Select a project'}
-              {project && !mile && !loading && 'Select a milestone to view the Gantt chart'}
+              {!teamId && 'Select a team to get started'}
+              {teamId && !projectId && !loading && 'Select a project'}
+              {projectId && !milestoneId && !loading && 'Select a milestone to view the Gantt chart'}
             </div>
           </>
         )}
