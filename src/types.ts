@@ -7,6 +7,8 @@ export interface Team {
 export interface Project {
   id: string
   name: string
+  icon: string | null
+  color: string | null
 }
 
 export interface Milestone {

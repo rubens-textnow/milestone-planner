@@ -16,6 +16,9 @@ export default function App() {
   const [mile, setMile] = useState<Milestone | null>(null)
   const [issues, setIssues] = useState<Issue[] | null>(null)
 
+  const [teamSearch, setTeamSearch] = useState('')
+  const [favoriteTeamId, setFavoriteTeamId] = useState<string | null>(() => localStorage.getItem('lgk-fav-team'))
+
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -70,6 +73,14 @@ export default function App() {
     setApiKey(''); setKeyDraft('')
     setTeams([]); setTeam(null); setProjects([]); setProject(null)
     setMiles([]); setMile(null); setIssues(null); setError('')
+  }
+
+  function toggleFavorite(id: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    const next = favoriteTeamId === id ? null : id
+    setFavoriteTeamId(next)
+    if (next) localStorage.setItem('lgk-fav-team', next)
+    else localStorage.removeItem('lgk-fav-team')
   }
 
   function navTeam() { setTeam(null); setProject(null); setMile(null); setIssues(null) }
@@ -138,13 +149,40 @@ export default function App() {
           <>
             <div className="panel">
               <div className="panel-header">Teams</div>
+              <div className="panel-search">
+                <input
+                  className="panel-search-input"
+                  type="text"
+                  placeholder="Filter teams…"
+                  value={teamSearch}
+                  onChange={e => setTeamSearch(e.target.value)}
+                />
+              </div>
               <div className="panel-list">
                 {teams.length === 0 && !loading && <div className="panel-empty">No teams found.</div>}
-                {teams.map(t => (
-                  <div key={t.id} className={`panel-item ${team?.id === t.id ? 'sel' : ''}`} onClick={() => setTeam(t)}>
-                    <span className="panel-item-key">{t.key}</span>{t.name}
-                  </div>
-                ))}
+                {(() => {
+                  const filtered = teams.filter(t =>
+                    t.name.toLowerCase().includes(teamSearch.toLowerCase()) ||
+                    t.key.toLowerCase().includes(teamSearch.toLowerCase())
+                  )
+                  const sorted = [...filtered].sort((a, b) =>
+                    a.id === favoriteTeamId ? -1 : b.id === favoriteTeamId ? 1 : 0
+                  )
+                  if (teams.length > 0 && teamSearch && filtered.length === 0) {
+                    return <div className="panel-empty">No teams match "{teamSearch}".</div>
+                  }
+                  return sorted.map(t => (
+                    <div key={t.id} className={`panel-item ${team?.id === t.id ? 'sel' : ''}`} onClick={() => setTeam(t)}>
+                      <span className="panel-item-key">{t.key}</span>
+                      <span style={{ flex: 1 }}>{t.name}</span>
+                      <button
+                        className={`fav-btn ${favoriteTeamId === t.id ? 'fav-btn-on' : ''}`}
+                        onClick={e => toggleFavorite(t.id, e)}
+                        title={favoriteTeamId === t.id ? 'Remove favorite' : 'Mark as favorite'}
+                      >★</button>
+                    </div>
+                  ))
+                })()}
               </div>
             </div>
 
@@ -155,6 +193,7 @@ export default function App() {
                   {projects.length === 0 && !loading && <div className="panel-empty">No projects.</div>}
                   {projects.map(p => (
                     <div key={p.id} className={`panel-item ${project?.id === p.id ? 'sel' : ''}`} onClick={() => setProject(p)}>
+                      <span className="project-icon" style={{ background: p.color ?? '#374151' }} />
                       {p.name}
                     </div>
                   ))}

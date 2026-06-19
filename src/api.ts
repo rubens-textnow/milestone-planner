@@ -18,7 +18,7 @@ export async function gql<T>(key: string, query: string, vars: Record<string, un
 export const Q_TEAMS = `query { teams(first:250){ nodes{ id name key } } }`
 
 export const Q_PROJECTS = `query($id:String!){
-  team(id:$id){ projects(first:250){ nodes{ id name } } }
+  team(id:$id){ projects(first:250){ nodes{ id name icon color } } }
 }`
 
 export const Q_MILESTONES = `query($id:String!){
