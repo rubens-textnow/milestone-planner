@@ -1,0 +1,68 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0d0d14; color: #e2e8f0; height: 100vh; overflow: hidden; }
+#root { height: 100vh; display: flex; flex-direction: column; }
+
+/* ── Layout ── */
+.app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.topbar { background: #12121f; border-bottom: 1px solid #1e1e30; padding: 0 20px; height: 48px; display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.topbar-title { font-size: 15px; font-weight: 700; color: #a78bfa; letter-spacing: -0.3px; }
+.topbar-spacer { flex: 1; }
+.btn-ghost { background: none; border: 1px solid #2d2d44; color: #9ca3af; border-radius: 6px; padding: 4px 11px; font-size: 12px; cursor: pointer; transition: all 0.1s; }
+.btn-ghost:hover { border-color: #7c3aed; color: #c4b5fd; }
+
+/* ── Key gate ── */
+.key-gate { flex: 1; display: flex; align-items: center; justify-content: center; }
+.key-card { background: #12121f; border: 1px solid #1e1e30; border-radius: 14px; padding: 36px; width: 440px; }
+.key-card h2 { font-size: 17px; font-weight: 600; margin-bottom: 8px; color: #f1f5f9; }
+.key-card p { color: #6b7280; font-size: 13px; margin-bottom: 22px; line-height: 1.6; }
+.key-card p strong { color: #9ca3af; }
+.key-input { width: 100%; background: #0a0a14; border: 1px solid #2d2d44; border-radius: 8px; padding: 10px 13px; color: #e2e8f0; font-size: 13px; font-family: 'Menlo', 'Monaco', monospace; outline: none; transition: border-color 0.15s; }
+.key-input:focus { border-color: #7c3aed; }
+.btn-primary { background: #7c3aed; color: #fff; border: none; border-radius: 8px; padding: 10px 18px; font-size: 14px; font-weight: 500; cursor: pointer; width: 100%; margin-top: 12px; transition: background 0.15s; }
+.btn-primary:hover { background: #6d28d9; }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Breadcrumb ── */
+.breadcrumb { background: #10101c; border-bottom: 1px solid #1e1e30; padding: 0 20px; height: 36px; display: flex; align-items: center; gap: 6px; font-size: 12px; flex-shrink: 0; }
+.bc-item { color: #6b7280; cursor: pointer; padding: 2px 4px; border-radius: 4px; transition: color 0.1s; white-space: nowrap; }
+.bc-item:hover { color: #c4b5fd; }
+.bc-item.current { color: #a78bfa; cursor: default; font-weight: 500; }
+.bc-sep { color: #374151; }
+
+/* ── Drill panels ── */
+.content { flex: 1; display: flex; overflow: hidden; }
+.panel { width: 260px; border-right: 1px solid #1a1a28; display: flex; flex-direction: column; flex-shrink: 0; background: #0f0f1c; overflow: hidden; }
+.panel-header { padding: 12px 14px 8px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #4b5563; flex-shrink: 0; }
+.panel-list { overflow-y: auto; flex: 1; }
+.panel-item { padding: 9px 14px; cursor: pointer; font-size: 13px; color: #cbd5e1; border-bottom: 1px solid #12121e; transition: background 0.1s; display: flex; align-items: center; gap: 8px; }
+.panel-item:hover { background: #1a1a2e; }
+.panel-item.sel { background: #1e1b40; border-left: 3px solid #7c3aed; color: #c4b5fd; padding-left: 11px; }
+.panel-item-key { font-family: monospace; font-size: 10.5px; color: #4b5563; flex-shrink: 0; }
+.panel-empty { padding: 14px; color: #4b5563; font-size: 12px; }
+
+/* ── Empty / error / loading ── */
+.placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: #374151; font-size: 13px; }
+.error-bar { background: #450a0a; border: 1px solid #7f1d1d; color: #fca5a5; padding: 8px 16px; font-size: 12.5px; flex-shrink: 0; }
+.spinner { width: 18px; height: 18px; border: 2px solid #2d2d44; border-top-color: #7c3aed; border-radius: 50%; animation: spin 0.65s linear infinite; flex-shrink: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-row { display: flex; align-items: center; justify-content: center; gap: 10px; color: #4b5563; font-size: 13px; padding: 48px; }
+
+/* ── Gantt ── */
+.gantt-wrap { flex: 1; overflow: auto; }
+.gantt-inner { display: inline-flex; min-width: 100%; min-height: 100%; }
+.gantt-labels { position: sticky; left: 0; z-index: 20; background: #0d0d14; flex-shrink: 0; border-right: 1px solid #1e1e30; }
+.gantt-label-header { background: #10101c; border-bottom: 1px solid #1e1e30; display: flex; align-items: center; padding: 0 12px; font-size: 10.5px; color: #4b5563; text-transform: uppercase; letter-spacing: 0.7px; }
+.gantt-label-row { display: flex; align-items: center; padding: 0 12px; gap: 8px; border-bottom: 1px solid #111120; cursor: pointer; overflow: hidden; }
+.gantt-label-row:hover { background: #12121f; }
+.gantt-label-id { font-family: monospace; font-size: 11px; flex-shrink: 0; }
+.gantt-label-title { font-size: 12px; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Tooltip ── */
+.tt { position: fixed; background: #1a1a2e; border: 1px solid #2d2d44; border-radius: 9px; padding: 11px 14px; font-size: 12px; pointer-events: none; z-index: 9999; max-width: 290px; box-shadow: 0 8px 32px rgba(0,0,0,0.6); }
+.tt-name { font-weight: 600; color: #f1f5f9; margin-bottom: 7px; line-height: 1.4; }
+.tt-row { display: flex; gap: 8px; margin-top: 4px; }
+.tt-lbl { color: #6b7280; width: 68px; flex-shrink: 0; font-size: 11px; }
+.tt-val { color: #cbd5e1; font-size: 11px; }
+
+/* ── Cycle warning ── */
+.cycle-warn { background: #431407; border-top: 1px solid #7c2d12; color: #fdba74; padding: 6px 16px; font-size: 11.5px; flex-shrink: 0; }
