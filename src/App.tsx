@@ -128,8 +128,16 @@ export default function App() {
           <div className="key-card">
             <h2>Connect to Linear</h2>
             <p>
-              Create a <strong>Personal API key</strong> at<br />
-              <strong>Linear → Settings → API → Personal API keys</strong>.<br />
+              Create a <strong>Personal API key</strong> at{' '}
+              <a
+                href="https://linear.app/textnow/settings/account/security/api-keys/new"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#818cf8' }}
+              >
+                Linear → Settings → API Keys → New API key
+              </a>
+              , then paste it below.<br />
               Your key is stored in <code style={{ fontSize: 11, color: '#818cf8' }}>localStorage</code> and never leaves your browser.
             </p>
             <input

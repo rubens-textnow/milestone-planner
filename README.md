@@ -1,24 +1,20 @@
 # Linear Gantt
 
-A fully browser-based Gantt chart viewer for Linear milestones. No build step, no backend, no server required.
+A fully browser-based Gantt chart viewer for Linear milestones.
 
 ## Setup
 
 ### 1. Get a Personal API Key
 
-1. Open Linear → **Settings** → **API** → **Personal API keys**
-2. Click **Create key**, give it a name, copy the value (`lin_api_…`)
+1. Go to [Linear → Settings → API Keys → New API key](https://linear.app/textnow/settings/account/security/api-keys/new)
+2. Give it a name, click **Create key**, and copy the value (`lin_api_…`)
 
 ### 2. Run the app
 
-Open `index.html` directly in your browser — or serve it locally to avoid any `file://` quirks:
-
 ```bash
-python3 -m http.server 8080
-# then open http://localhost:8080
+docker compose up
+# then open http://localhost:5173
 ```
-
-No npm, no Node, no build step needed.
 
 ### 3. Connect
 

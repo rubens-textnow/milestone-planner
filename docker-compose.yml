@@ -1,12 +1,15 @@
 services:
   app:
     build: .
+    restart: unless-stopped
     ports:
       - "5173:5173"
     volumes:
       - .:/app
       - node_modules:/app/node_modules
     environment:
+      # Required for file-watch hot-reload to work inside Docker on macOS/Windows,
+      # where inotify events from the host don't propagate into the container.
       - CHOKIDAR_USEPOLLING=true
 
 volumes:
