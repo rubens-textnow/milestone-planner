@@ -33,11 +33,6 @@ export function buildSchedule(issues: Issue[]): Schedule {
         rawEdges.push({ from: iss.identifier, to: r.relatedIssue.identifier })
       }
     }
-    for (const r of iss.inverseRelations?.nodes ?? []) {
-      if (r.type === 'blocks' && byIden[r.relatedIssue.identifier]) {
-        rawEdges.push({ from: r.relatedIssue.identifier, to: iss.identifier })
-      }
-    }
   }
 
   const edgeSet = new Set(rawEdges.map(e => `${e.from}→${e.to}`))

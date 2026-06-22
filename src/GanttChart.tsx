@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import type { Issue } from './types'
 import { buildSchedule, stateColors, sod, addD, isWE, MS } from './schedule'
 import { gql, M_CREATE_RELATION, M_DELETE_RELATION } from './api'
@@ -7,9 +7,15 @@ import IssueDetail from './IssueDetail'
 const ROW_H = 36
 const DAY_W = 26
 const HDR_H = 46
-const LBL_W = 264
+const MIN_LBL_W = 120
+const DEFAULT_LBL_W = 264
 const BAR_PAD = 5
-const HANDLE_W = 8  // hot-zone width for drag handles on each side of a bar
+const HANDLE_W = 8
+const POINT_W = 52   // pixels per story point
+
+function rowHeight(_estimate: number | null): number {
+  return ROW_H
+}
 
 interface TooltipState {
   b: Bar
@@ -18,7 +24,7 @@ interface TooltipState {
 }
 
 interface Bar {
-  id: string        // identifier
+  id: string
   iss: Issue
   x: number
   w: number
@@ -28,7 +34,7 @@ interface Bar {
 }
 
 interface DragState {
-  fromIden: string  // identifier of source bar
+  fromIden: string
   side: 'left' | 'right'
   mx: number
   my: number
@@ -38,10 +44,9 @@ interface ArrowMeta {
   ax1: number; ay1: number
   ax2: number; ay2: number
   ctrl: number
-  // relation info for deletion
   relationId: string
-  blockerIden: string  // the "from" (blocker)
-  blockedIden: string  // the "to"  (blocked)
+  blockerIden: string
+  blockedIden: string
 }
 
 const fmt = (d: Date | null) =>
@@ -57,9 +62,38 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
   const [tip, setTip] = useState<TooltipState | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
-  const [hoveredArrow, setHoveredArrow] = useState<string | null>(null) // relationId
+  const [hoveredArrow, setHoveredArrow] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ relationId: string; x: number; y: number } | null>(null)
   const [working, setWorking] = useState(false)
+  const [lblW, setLblW] = useState(DEFAULT_LBL_W)
+  const resizingRef = useRef(false)
+  const resizeStartX = useRef(0)
+  const resizeStartW = useRef(0)
   const svgRef = useRef<SVGSVGElement>(null)
+
+  // Column resize — attach global listeners so dragging outside the handle still works
+  const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    resizingRef.current = true
+    resizeStartX.current = e.clientX
+    resizeStartW.current = lblW
+
+    function onMove(ev: MouseEvent) {
+      if (!resizingRef.current) return
+      const next = Math.max(MIN_LBL_W, resizeStartW.current + ev.clientX - resizeStartX.current)
+      setLblW(next)
+    }
+    function onUp() {
+      resizingRef.current = false
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [lblW])
+
+  // Clean up if component unmounts mid-drag
+  useEffect(() => () => { resizingRef.current = false }, [])
 
   if (!issues.length) return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#374151', fontSize: 13 }}>
@@ -73,7 +107,6 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
 
   const selectedIssue = selectedId ? issues.find(i => i.identifier === selectedId) ?? null : null
 
-  // blocked-by / blocks maps
   const blockedByMap: Record<string, Issue[]> = {}
   const blocksMap: Record<string, Issue[]> = {}
   for (const iss of issues) { blockedByMap[iss.identifier] = []; blocksMap[iss.identifier] = [] }
@@ -86,14 +119,10 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
     }
   }
 
-  // Build a lookup: "blockerIden→blockedIden" → relationId
   const relationLookup: Record<string, string> = {}
   for (const iss of issues) {
     for (const r of iss.relations?.nodes ?? []) {
       if (r.type === 'blocks') relationLookup[`${iss.identifier}→${r.relatedIssue.identifier}`] = r.id
-    }
-    for (const r of iss.inverseRelations?.nodes ?? []) {
-      if (r.type === 'blocks') relationLookup[`${r.relatedIssue.identifier}→${iss.identifier}`] = r.id
     }
   }
 
@@ -110,11 +139,22 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
 
   const nDays = Math.ceil((maxD.getTime() - minD.getTime()) / MS) + 1
   const svgW = nDays * DAY_W
-  const svgH = topo.length * ROW_H + HDR_H
-  const rowIdx = Object.fromEntries(topo.map((id, i) => [id, i]))
+
+  // Cumulative row offsets — each row height depends on estimate size
+  const rowY: Record<string, number> = {}
+  const rowH: Record<string, number> = {}
+  let cursor = HDR_H
+  for (const id of topo) {
+    const iss = byIden[id]
+    const h = rowHeight(iss?.estimate ?? null)
+    rowY[id] = cursor
+    rowH[id] = h
+    cursor += h
+  }
+  const svgH = cursor
 
   const dx = (d: Date) => Math.floor((sod(d).getTime() - minD!.getTime()) / MS) * DAY_W
-  const ry = (i: number) => HDR_H + i * ROW_H
+  const ry = (id: string) => rowY[id] ?? HDR_H
 
   const monthMarks: { x: number; label: string }[] = []
   let prevM = -1
@@ -145,9 +185,9 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
     const s = sched[id]
     if (!iss || !s) return []
     const x = dx(s.start)
-    const x2 = dx(s.end) + DAY_W - 2
-    const w = Math.max(DAY_W - 2, x2 - x)
-    const y = ry(rowIdx[id])
+    const pts = Math.max(1, Math.round(iss.estimate ?? 1))
+    const w = pts * POINT_W
+    const y = ry(id)
     return [{ id, iss, x, w, y, s, c: stateColors(iss.state?.type) }]
   })
   const barByIden = Object.fromEntries(bars.map(b => [b.id, b]))
@@ -155,17 +195,14 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
   const arrows: ArrowMeta[] = []
   for (const [fromId, toSet] of Object.entries(outgoing)) {
     const fs = sched[fromId]
-    if (!fs) continue
-    const fi = rowIdx[fromId]
-    if (fi === undefined) continue
+    if (!fs || rowY[fromId] === undefined) continue
     const ax1 = dx(fs.end) + DAY_W - 1
-    const ay1 = ry(fi) + ROW_H / 2
+    const ay1 = ry(fromId) + rowH[fromId] / 2
     for (const toId of toSet) {
       const ts = sched[toId]
-      const ti = rowIdx[toId]
-      if (!ts || ti === undefined) continue
+      if (!ts || rowY[toId] === undefined) continue
       const ax2 = dx(ts.start)
-      const ay2 = ry(ti) + ROW_H / 2
+      const ay2 = ry(toId) + rowH[toId] / 2
       const ctrl = Math.max(40, Math.abs(ax2 - ax1) / 2)
       const relationId = relationLookup[`${fromId}→${toId}`] ?? ''
       arrows.push({ ax1, ay1, ax2, ay2, ctrl, relationId, blockerIden: fromId, blockedIden: toId })
@@ -178,8 +215,6 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
     setSelectedId(prev => prev === identifier ? null : identifier)
   }
 
-  // ── Drag-to-link ──────────────────────────────────────────────────────────
-
   function svgPoint(e: React.MouseEvent): { x: number; y: number } | null {
     if (!svgRef.current) return null
     const rect = svgRef.current.getBoundingClientRect()
@@ -188,9 +223,8 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
 
   function barAtPoint(x: number, y: number): Bar | null {
     for (const b of bars) {
-      if (x >= b.x && x <= b.x + b.w && y >= b.y + BAR_PAD && y <= b.y + ROW_H - BAR_PAD) return b
-      // also hit the full row height so it's easier to target
-      if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + ROW_H) return b
+      const h = rowH[b.id]
+      if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + h) return b
     }
     return null
   }
@@ -206,12 +240,9 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
     const target = pt ? barAtPoint(pt.x, pt.y) : null
 
     if (target && target.id !== drag.fromIden) {
-      // drag.side === 'right'  → fromIden BLOCKS target
-      // drag.side === 'left'   → target BLOCKS fromIden
       const blocker = drag.side === 'right' ? drag.fromIden : target.id
       const blocked = drag.side === 'right' ? target.id : drag.fromIden
 
-      // Skip if relation already exists
       if (!relationLookup[`${blocker}→${blocked}`]) {
         const blockerIssue = byIden[blocker]
         const blockedIssue = byIden[blocked]
@@ -238,6 +269,7 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
 
   async function deleteRelation(relationId: string) {
     if (!relationId || working) return
+    setConfirmDelete(null)
     setWorking(true)
     try {
       await gql(apiKey, M_DELETE_RELATION, { id: relationId })
@@ -249,21 +281,19 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
     }
   }
 
-  // drag preview line coords (in SVG space)
   let previewLine: { x1: number; y1: number; x2: number; y2: number } | null = null
   if (drag && svgRef.current) {
     const rect = svgRef.current.getBoundingClientRect()
     const srcBar = barByIden[drag.fromIden]
     if (srcBar) {
       const x1 = drag.side === 'right' ? srcBar.x + srcBar.w : srcBar.x
-      const y1 = srcBar.y + ROW_H / 2
+      const y1 = srcBar.y + (rowH[srcBar.id] ?? ROW_H_SM) / 2
       previewLine = { x1, y1, x2: drag.mx - rect.left, y2: drag.my - rect.top }
     }
   }
 
   return (
     <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-      {/* Gantt pane */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         {(cycleWarnings.length > 0 || working) && (
           <div className="cycle-warn" style={working ? { background: '#1a1535', borderColor: '#4c1d95', color: '#c4b5fd' } : {}}>
@@ -272,8 +302,8 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
         )}
         <div className="gantt-wrap">
           <div className="gantt-inner">
-            {/* Sticky labels */}
-            <div className="gantt-labels" style={{ width: LBL_W }}>
+            {/* Sticky labels column */}
+            <div className="gantt-labels" style={{ width: lblW }}>
               <div className="gantt-label-header" style={{ height: HDR_H }}>Issue</div>
               {topo.map(id => {
                 const iss = byIden[id]
@@ -284,7 +314,7 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
                   <div
                     key={id}
                     className={`gantt-label-row ${isSelected ? 'gantt-label-row-sel' : ''}`}
-                    style={{ height: ROW_H }}
+                    style={{ height: rowH[id] }}
                     onClick={() => handleSelect(iss.identifier)}
                     title={iss.title}
                   >
@@ -293,9 +323,12 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
                   </div>
                 )
               })}
+
+              {/* Resize handle */}
+              <div className="gantt-col-resize" onMouseDown={onResizeMouseDown} />
             </div>
 
-            {/* SVG */}
+            {/* SVG chart */}
             <svg
               ref={svgRef}
               width={svgW} height={svgH}
@@ -316,29 +349,25 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
                 </marker>
               </defs>
 
-              {/* Weekend shading */}
               {weekendXs.map(x => (
                 <rect key={x} x={x} y={0} width={DAY_W} height={svgH} fill="#070712" />
               ))}
 
-              {/* Row highlight + click target */}
-              {topo.map((id, i) => (
+              {topo.map(id => (
                 <rect
                   key={id}
-                  x={0} y={ry(i)} width={svgW} height={ROW_H}
+                  x={0} y={ry(id)} width={svgW} height={rowH[id]}
                   fill={selectedId === id ? 'rgba(124,58,237,0.07)' : 'transparent'}
                   style={{ cursor: 'pointer' }}
                   onClick={() => handleSelect(id)}
                 />
               ))}
 
-              {/* Row dividers */}
-              {topo.map((_, i) => (
-                <line key={i} x1={0} y1={ry(i)} x2={svgW} y2={ry(i)} stroke="#111120" />
+              {topo.map(id => (
+                <line key={id} x1={0} y1={ry(id)} x2={svgW} y2={ry(id)} stroke="#111120" />
               ))}
-              <line x1={0} y1={ry(topo.length)} x2={svgW} y2={ry(topo.length)} stroke="#111120" />
+              <line x1={0} y1={svgH} x2={svgW} y2={svgH} stroke="#111120" />
 
-              {/* Header */}
               <rect x={0} y={0} width={svgW} height={HDR_H} fill="#10101c" />
               <line x1={0} y1={HDR_H} x2={svgW} y2={HDR_H} stroke="#1e1e30" />
 
@@ -352,7 +381,6 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
                 </g>
               ))}
 
-              {/* Today line */}
               {todayX >= 0 && todayX <= svgW && (
                 <g>
                   <line x1={todayX} y1={0} x2={todayX} y2={svgH} stroke="#ef4444" strokeWidth={1} strokeDasharray="3 3" opacity={0.6} />
@@ -360,28 +388,34 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
                 </g>
               )}
 
-              {/* Dependency arrows — clickable to delete */}
               {arrows.map((a, i) => {
                 const isHov = hoveredArrow === a.relationId
+                const isConfirming = confirmDelete?.relationId === a.relationId
                 const d = `M ${a.ax1},${a.ay1} C ${a.ax1 + a.ctrl},${a.ay1} ${a.ax2 - a.ctrl},${a.ay2} ${a.ax2},${a.ay2}`
+                const active = isHov || isConfirming
                 return (
                   <g key={i} style={{ cursor: a.relationId ? 'pointer' : 'default' }}>
-                    {/* wide invisible hit area */}
                     <path d={d} fill="none" stroke="transparent" strokeWidth={12}
                       onMouseEnter={() => setHoveredArrow(a.relationId)}
                       onMouseLeave={() => setHoveredArrow(null)}
-                      onClick={() => a.relationId && deleteRelation(a.relationId)}
+                      onClick={e => {
+                        if (!a.relationId) return
+                        const svgRect = svgRef.current!.getBoundingClientRect()
+                        const mx = (a.ax1 + a.ax2) / 2
+                        const my = (a.ay1 + a.ay2) / 2
+                        setConfirmDelete({ relationId: a.relationId, x: svgRect.left + mx, y: svgRect.top + my })
+                        setHoveredArrow(null)
+                      }}
                     />
                     <path
-                      d={d}
-                      fill="none"
-                      stroke={isHov ? '#ef4444' : '#7c3aed'}
-                      strokeWidth={isHov ? 2 : 1.5}
-                      opacity={isHov ? 0.9 : 0.55}
-                      markerEnd={isHov ? 'url(#ah-del)' : 'url(#ah)'}
+                      d={d} fill="none"
+                      stroke={active ? '#ef4444' : '#7c3aed'}
+                      strokeWidth={active ? 2 : 1.5}
+                      opacity={active ? 0.9 : 0.55}
+                      markerEnd={active ? 'url(#ah-del)' : 'url(#ah)'}
                       style={{ pointerEvents: 'none' }}
                     />
-                    {isHov && (
+                    {isHov && !isConfirming && (
                       <text
                         x={(a.ax1 + a.ax2) / 2} y={(a.ay1 + a.ay2) / 2 - 6}
                         fill="#ef4444" fontSize={9.5} fontFamily="-apple-system,sans-serif"
@@ -394,12 +428,12 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
                 )
               })}
 
-              {/* Bars */}
               {bars.map(b => {
                 const isSelected = selectedId === b.id
+                const rh = rowH[b.id]
+                const barH = rh - BAR_PAD * 2
                 return (
                   <g key={b.id}>
-                    {/* Bar body */}
                     <g
                       style={{ cursor: 'pointer' }}
                       onMouseMove={e => { if (!drag) setTip({ b, mx: e.clientX, my: e.clientY }) }}
@@ -407,18 +441,18 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
                       onClick={() => handleSelect(b.iss.identifier)}
                     >
                       <rect
-                        x={b.x + 1} y={b.y + BAR_PAD} width={b.w} height={ROW_H - BAR_PAD * 2}
+                        x={b.x + 1} y={b.y + BAR_PAD} width={b.w} height={barH}
                         rx={3} fill={b.c.fill} stroke={b.c.stroke} strokeWidth={isSelected ? 2 : 1}
                         opacity={isSelected ? 1 : 0.85}
                       />
                       {b.w > 28 && (
                         <clipPath id={`cp-${b.id}`}>
-                          <rect x={b.x + 1} y={b.y + BAR_PAD} width={b.w} height={ROW_H - BAR_PAD * 2} />
+                          <rect x={b.x + 1} y={b.y + BAR_PAD} width={b.w} height={barH} />
                         </clipPath>
                       )}
                       {b.w > 28 && (
                         <text
-                          x={b.x + 6} y={b.y + ROW_H / 2 + 4}
+                          x={b.x + 6} y={b.y + rh / 2 + 4}
                           fill={b.c.text} fontSize={10.5} fontFamily="-apple-system,sans-serif"
                           clipPath={`url(#cp-${b.id})`}
                         >
@@ -427,10 +461,9 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
                       )}
                     </g>
 
-                    {/* Right handle — drag out means "this blocks something" */}
                     <rect
                       x={b.x + b.w - HANDLE_W + 2} y={b.y + BAR_PAD}
-                      width={HANDLE_W} height={ROW_H - BAR_PAD * 2}
+                      width={HANDLE_W} height={barH}
                       rx={3} fill="#7c3aed" opacity={drag?.fromIden === b.id && drag.side === 'right' ? 0.9 : 0}
                       style={{ cursor: 'crosshair' }}
                       onMouseEnter={e => { e.currentTarget.style.opacity = '0.5'; setTip(null) }}
@@ -442,10 +475,9 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
                       }}
                     />
 
-                    {/* Left handle — drag out means "something blocks this" */}
                     <rect
                       x={b.x + 1} y={b.y + BAR_PAD}
-                      width={HANDLE_W} height={ROW_H - BAR_PAD * 2}
+                      width={HANDLE_W} height={barH}
                       rx={3} fill="#7c3aed" opacity={drag?.fromIden === b.id && drag.side === 'left' ? 0.9 : 0}
                       style={{ cursor: 'crosshair' }}
                       onMouseEnter={e => { e.currentTarget.style.opacity = '0.5'; setTip(null) }}
@@ -460,7 +492,6 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
                 )
               })}
 
-              {/* Preview line while dragging */}
               {previewLine && (
                 <line
                   x1={previewLine.x1} y1={previewLine.y1}
@@ -490,7 +521,17 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
         })()}
       </div>
 
-      {/* Detail pane */}
+      {confirmDelete && (
+        <div
+          className="relation-confirm"
+          style={{ left: confirmDelete.x, top: confirmDelete.y }}
+        >
+          <span>Remove this dependency?</span>
+          <button className="relation-confirm-yes" onClick={() => deleteRelation(confirmDelete.relationId)}>Remove</button>
+          <button className="relation-confirm-no" onClick={() => setConfirmDelete(null)}>Cancel</button>
+        </div>
+      )}
+
       {selectedIssue && sched[selectedIssue.identifier] && (
         <IssueDetail
           issue={selectedIssue}
