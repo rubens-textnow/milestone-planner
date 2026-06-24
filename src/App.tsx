@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import type { Team, Project, Milestone, Issue } from './types'
-import { gql, Q_TEAMS, Q_PROJECTS, Q_MILESTONES, Q_ISSUES } from './api'
+import type { Team, Project, Milestone, Issue, Cycle } from './types'
+import { gql, Q_TEAMS, Q_PROJECTS, Q_MILESTONES, Q_ISSUES, Q_CYCLES } from './api'
 import GanttChart from './GanttChart'
 
 export default function App() {
@@ -13,9 +13,11 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([])
   const [miles, setMiles] = useState<Milestone[]>([])
   const [issues, setIssues] = useState<Issue[] | null>(null)
+  const [cycles, setCycles] = useState<Cycle[]>([])
 
   const [teamSearch, setTeamSearch] = useState('')
   const [favoriteTeamId, setFavoriteTeamId] = useState<string | null>(() => localStorage.getItem('lgk-fav-team'))
+  const [favoriteProjectId, setFavoriteProjectId] = useState<string | null>(() => localStorage.getItem('lgk-fav-project'))
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -40,12 +42,15 @@ export default function App() {
     load(() => gql<{ teams: { nodes: Team[] } }>(apiKey, Q_TEAMS).then(d => setTeams(d.teams.nodes)))
   }, [apiKey])
 
-  // Fetch projects when teamId changes
+  // Fetch projects and cycles when teamId changes
   useEffect(() => {
-    if (!teamId || !apiKey) { setProjects([]); return }
+    if (!teamId || !apiKey) { setProjects([]); setCycles([]); return }
     setProjects([])
     load(() => gql<{ team: { projects: { nodes: Project[] } } }>(apiKey, Q_PROJECTS, { id: teamId })
       .then(d => setProjects(d.team.projects.nodes)))
+    gql<{ team: { cycles: { nodes: Cycle[] } } }>(apiKey, Q_CYCLES, { teamId })
+      .then(d => setCycles([...d.team.cycles.nodes].sort((a, b) => a.startsAt.localeCompare(b.startsAt))))
+      .catch(e => setError((e as Error).message))
   }, [teamId, apiKey])
 
   // Fetch milestones when projectId changes
@@ -99,6 +104,14 @@ export default function App() {
     setFavoriteTeamId(next)
     if (next) localStorage.setItem('lgk-fav-team', next)
     else localStorage.removeItem('lgk-fav-team')
+  }
+
+  function toggleFavoriteProject(id: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    const next = favoriteProjectId === id ? null : id
+    setFavoriteProjectId(next)
+    if (next) localStorage.setItem('lgk-fav-project', next)
+    else localStorage.removeItem('lgk-fav-project')
   }
 
   function selectTeam(t: Team) {
@@ -229,12 +242,19 @@ export default function App() {
                 <div className="panel-header">Projects — {team?.name}</div>
                 <div className="panel-list">
                   {projects.length === 0 && !loading && <div className="panel-empty">No projects.</div>}
-                  {projects.map(p => (
-                    <div key={p.id} className={`panel-item ${projectId === p.id ? 'sel' : ''}`} onClick={() => selectProject(p)}>
-                      <span className="project-icon" style={{ background: p.color ?? '#374151' }} />
-                      {p.name}
-                    </div>
-                  ))}
+                  {[...projects]
+                    .sort((a, b) => a.id === favoriteProjectId ? -1 : b.id === favoriteProjectId ? 1 : 0)
+                    .map(p => (
+                      <div key={p.id} className={`panel-item ${projectId === p.id ? 'sel' : ''}`} onClick={() => selectProject(p)}>
+                        <span className="project-icon" style={{ background: p.color ?? '#374151' }} />
+                        <span style={{ flex: 1 }}>{p.name}</span>
+                        <button
+                          className={`fav-btn ${favoriteProjectId === p.id ? 'fav-btn-on' : ''}`}
+                          onClick={e => toggleFavoriteProject(p.id, e)}
+                          title={favoriteProjectId === p.id ? 'Remove favorite' : 'Mark as favorite'}
+                        >★</button>
+                      </div>
+                    ))}
                 </div>
               </div>
             )}
@@ -268,7 +288,7 @@ export default function App() {
                 <div className="spinner" />Loading issues…
               </div>
             )}
-            {issues !== null && <GanttChart issues={issues} apiKey={apiKey} onRefresh={refreshIssues} />}
+            {issues !== null && <GanttChart issues={issues} apiKey={apiKey} onRefresh={refreshIssues} cycles={cycles} />}
           </>
         )}
       </div>

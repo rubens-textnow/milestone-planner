@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import type { Issue } from './types'
-import { buildSchedule, stateColors, sod, addD, isWE, MS } from './schedule'
+import type { Issue, Cycle } from './types'
+import { buildSchedule, stateColors, sod, addD, MS } from './schedule'
 import { gql, M_CREATE_RELATION, M_DELETE_RELATION } from './api'
 import IssueDetail from './IssueDetail'
 
@@ -56,9 +56,10 @@ interface Props {
   issues: Issue[]
   apiKey: string
   onRefresh: () => void
+  cycles: Cycle[]
 }
 
-export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
+export default function GanttChart({ issues, apiKey, onRefresh, cycles }: Props) {
   const [tip, setTip] = useState<TooltipState | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -66,9 +67,14 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
   const [confirmDelete, setConfirmDelete] = useState<{ relationId: string; x: number; y: number } | null>(null)
   const [working, setWorking] = useState(false)
   const [lblW, setLblW] = useState(DEFAULT_LBL_W)
+  const [ganttW, setGanttW] = useState<number | null>(null)
   const resizingRef = useRef(false)
   const resizeStartX = useRef(0)
   const resizeStartW = useRef(0)
+  const ganttResizingRef = useRef(false)
+  const ganttResizeStartX = useRef(0)
+  const ganttResizeStartW = useRef(0)
+  const ganttOuterRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
 
   // Column resize — attach global listeners so dragging outside the handle still works
@@ -92,8 +98,28 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
     window.addEventListener('mouseup', onUp)
   }, [lblW])
 
+  const onGanttResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    ganttResizingRef.current = true
+    ganttResizeStartX.current = e.clientX
+    ganttResizeStartW.current = ganttOuterRef.current?.offsetWidth ?? (ganttW ?? window.innerWidth * 0.5)
+
+    function onMove(ev: MouseEvent) {
+      if (!ganttResizingRef.current) return
+      const next = Math.max(300, ganttResizeStartW.current + ev.clientX - ganttResizeStartX.current)
+      setGanttW(next)
+    }
+    function onUp() {
+      ganttResizingRef.current = false
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [ganttW])
+
   // Clean up if component unmounts mid-drag
-  useEffect(() => () => { resizingRef.current = false }, [])
+  useEffect(() => () => { resizingRef.current = false; ganttResizingRef.current = false }, [])
 
   if (!issues.length) return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#374151', fontSize: 13 }}>
@@ -105,7 +131,40 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
   const byIden = Object.fromEntries(issues.map(i => [i.identifier, i]))
   const byId = Object.fromEntries(issues.map(i => [i.id, i]))
 
+  // Build parent→children map (only for issues in this milestone)
+  const childrenOf: Record<string, string[]> = {}
+  const isChild: Record<string, boolean> = {}
+  const parentOf: Record<string, string> = {}
+  for (const iss of issues) {
+    if (iss.parent && byId[iss.parent.id]) {
+      const pIden = iss.parent.identifier
+      if (!childrenOf[pIden]) childrenOf[pIden] = []
+      childrenOf[pIden].push(iss.identifier)
+      isChild[iss.identifier] = true
+      parentOf[iss.identifier] = pIden
+    }
+  }
+
+  // Reorder topo: each parent is immediately followed by its children
+  const orderedTopo: string[] = []
+  const inserted = new Set<string>()
+  for (const id of topo) {
+    if (inserted.has(id)) continue
+    if (!isChild[id]) {
+      orderedTopo.push(id)
+      inserted.add(id)
+      for (const childId of childrenOf[id] ?? []) {
+        if (!inserted.has(childId)) { orderedTopo.push(childId); inserted.add(childId) }
+      }
+    }
+  }
+  // catch any remaining (e.g. child whose parent isn't in this milestone)
+  for (const id of topo) {
+    if (!inserted.has(id)) { orderedTopo.push(id); inserted.add(id) }
+  }
+
   const selectedIssue = selectedId ? issues.find(i => i.identifier === selectedId) ?? null : null
+  const hasSidebar = !!(selectedIssue && sched[selectedIssue.identifier])
 
   const blockedByMap: Record<string, Issue[]> = {}
   const blocksMap: Record<string, Issue[]> = {}
@@ -126,25 +185,104 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
     }
   }
 
-  let minD: Date | null = null, maxD: Date | null = null
-  for (const s of Object.values(sched)) {
-    if (!minD || s.start < minD) minD = s.start
-    if (!maxD || s.end > maxD) maxD = s.end
-  }
   const today = sod(new Date())
-  if (!minD) minD = today
-  if (!maxD) maxD = addD(today, 30)
-  minD = addD(minD, -3)
-  maxD = addD(maxD, 7)
 
-  const nDays = Math.ceil((maxD.getTime() - minD.getTime()) / MS) + 1
-  const svgW = nDays * DAY_W
+  const sortedCycles = [...cycles].sort((a, b) => a.startsAt.localeCompare(b.startsAt))
 
-  // Cumulative row offsets — each row height depends on estimate size
+  // Find current cycle index
+  const currentIdx = sortedCycles.findIndex(c => {
+    const cs = sod(new Date(c.startsAt)), ce = sod(new Date(c.endsAt))
+    return cs <= today && today <= ce
+  })
+  // If no current cycle, treat the next upcoming one as "current"
+  const anchorIdx = currentIdx >= 0
+    ? currentIdx
+    : sortedCycles.findIndex(c => sod(new Date(c.startsAt)) > today)
+
+  // Always show: current + next cycle
+  const visibleIdxSet = new Set<number>()
+  if (anchorIdx >= 0) {
+    visibleIdxSet.add(anchorIdx)
+    if (anchorIdx + 1 < sortedCycles.length) visibleIdxSet.add(anchorIdx + 1)
+  }
+
+  // Include any cycle (past or future) that overlaps with a scheduled task
+  for (let i = 0; i < sortedCycles.length; i++) {
+    const cs = sod(new Date(sortedCycles[i].startsAt))
+    const ce = sod(new Date(sortedCycles[i].endsAt))
+    for (const s of Object.values(sched)) {
+      if (s.start <= ce && s.end >= cs) { visibleIdxSet.add(i); break }
+    }
+  }
+
+  // Derive chart bounds from the visible cycle set (or fallback to schedule dates)
+  let minD: Date | null = null, maxD: Date | null = null
+
+  if (visibleIdxSet.size > 0) {
+    for (const i of visibleIdxSet) {
+      const cs = sod(new Date(sortedCycles[i].startsAt))
+      const ce = sod(new Date(sortedCycles[i].endsAt))
+      if (!minD || cs < minD) minD = cs
+      if (!maxD || ce > maxD) maxD = ce
+    }
+  } else {
+    // No cycles at all — fall back to schedule extent
+    for (const s of Object.values(sched)) {
+      if (!minD || s.start < minD) minD = s.start
+      if (!maxD || s.end > maxD) maxD = s.end
+    }
+    if (!minD) minD = today
+    if (!maxD) maxD = addD(today, 30)
+  }
+
+  const nDays = Math.ceil((maxD!.getTime() - minD!.getTime()) / MS) + 1
+  const dx = (d: Date) => Math.floor((sod(d).getTime() - minD!.getTime()) / MS) * DAY_W
+
+  // Build visible cycle columns
+  interface CycleCol { id: string; label: string; x: number; w: number; start: Date; end: Date; isCurrent: boolean }
+  const cycleCols: CycleCol[] = []
+
+  if (visibleIdxSet.size > 0) {
+    for (const i of [...visibleIdxSet].sort((a, b) => a - b)) {
+      const c = sortedCycles[i]
+      const cs = sod(new Date(c.startsAt))
+      const ce = sod(new Date(c.endsAt))
+      const x = dx(cs)
+      const w = Math.max(DAY_W, dx(ce) - x + DAY_W)
+      const isCurrent = currentIdx === i
+      const label = c.name ? c.name : `Cycle ${c.number}`
+      cycleCols.push({ id: c.id, label, x, w, start: cs, end: ce, isCurrent })
+    }
+  } else {
+    // Fallback: no cycles — month columns
+    let prevM = -1
+    let colStart = minD!
+    for (let i = 0; i <= nDays; i++) {
+      const d = addD(minD!, i)
+      if (d.getMonth() !== prevM || i === nDays) {
+        if (prevM !== -1) {
+          const x = dx(colStart)
+          const w = dx(d) - x
+          if (w > 0) {
+            const isCurrent = colStart <= today && today < d
+            cycleCols.push({
+              id: `m-${prevM}-${i}`,
+              label: colStart.toLocaleDateString('en', { month: 'short', year: 'numeric' }),
+              x, w, start: colStart, end: d, isCurrent,
+            })
+          }
+        }
+        colStart = d
+        prevM = d.getMonth()
+      }
+    }
+  }
+
+  // Cumulative row offsets
   const rowY: Record<string, number> = {}
   const rowH: Record<string, number> = {}
   let cursor = HDR_H
-  for (const id of topo) {
+  for (const id of orderedTopo) {
     const iss = byIden[id]
     const h = rowHeight(iss?.estimate ?? null)
     rowY[id] = cursor
@@ -153,34 +291,11 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
   }
   const svgH = cursor
 
-  const dx = (d: Date) => Math.floor((sod(d).getTime() - minD!.getTime()) / MS) * DAY_W
   const ry = (id: string) => rowY[id] ?? HDR_H
-
-  const monthMarks: { x: number; label: string }[] = []
-  let prevM = -1
-  for (let i = 0; i < nDays; i++) {
-    const d = addD(minD, i)
-    if (d.getMonth() !== prevM) {
-      monthMarks.push({ x: i * DAY_W, label: d.toLocaleDateString('en', { month: 'short', year: 'numeric' }) })
-      prevM = d.getMonth()
-    }
-  }
-
-  const weekMarks: { x: number; day: number }[] = []
-  for (let i = 0; i < nDays; i++) {
-    const d = addD(minD, i)
-    if (d.getDay() === 1) weekMarks.push({ x: i * DAY_W, day: d.getDate() })
-  }
-
-  const weekendXs: number[] = []
-  for (let i = 0; i < nDays; i++) {
-    const d = addD(minD, i)
-    if (isWE(d)) weekendXs.push(i * DAY_W)
-  }
 
   const todayX = dx(today)
 
-  const bars: Bar[] = topo.flatMap(id => {
+  const bars: Bar[] = orderedTopo.flatMap(id => {
     const iss = byIden[id]
     const s = sched[id]
     if (!iss || !s) return []
@@ -191,6 +306,10 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
     return [{ id, iss, x, w, y, s, c: stateColors(iss.state?.type) }]
   })
   const barByIden = Object.fromEntries(bars.map(b => [b.id, b]))
+
+  // SVG must be wide enough for both the date range and all bar right edges
+  const maxBarRight = bars.reduce((m, b) => Math.max(m, b.x + b.w), 0)
+  const svgW = Math.max(nDays * DAY_W, maxBarRight + DAY_W)
 
   const arrows: ArrowMeta[] = []
   for (const [fromId, toSet] of Object.entries(outgoing)) {
@@ -287,14 +406,24 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
     const srcBar = barByIden[drag.fromIden]
     if (srcBar) {
       const x1 = drag.side === 'right' ? srcBar.x + srcBar.w : srcBar.x
-      const y1 = srcBar.y + (rowH[srcBar.id] ?? ROW_H_SM) / 2
+      const y1 = srcBar.y + (rowH[srcBar.id] ?? ROW_H) / 2
       previewLine = { x1, y1, x2: drag.mx - rect.left, y2: drag.my - rect.top }
     }
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+    <div style={{ flex: 1, display: 'flex', minWidth: 0, overflow: 'hidden' }}>
+      <div
+        ref={ganttOuterRef}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          flexShrink: 0,
+          width: ganttW != null ? ganttW : hasSidebar ? '60%' : '100%',
+          minWidth: '50vw',
+        }}
+      >
         {(cycleWarnings.length > 0 || working) && (
           <div className="cycle-warn" style={working ? { background: '#1a1535', borderColor: '#4c1d95', color: '#c4b5fd' } : {}}>
             {working ? 'Saving…' : `⚠ Dependency cycle(s) detected — schedule approximated. ${cycleWarnings.join(' | ')}`}
@@ -303,18 +432,21 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
         <div className="gantt-wrap">
           <div className="gantt-inner">
             {/* Sticky labels column */}
-            <div className="gantt-labels" style={{ width: lblW }}>
+            <div className="gantt-labels" style={{ width: lblW, position: 'relative' }}>
               <div className="gantt-label-header" style={{ height: HDR_H }}>Issue</div>
-              {topo.map(id => {
+              {orderedTopo.map(id => {
                 const iss = byIden[id]
                 if (!iss) return null
                 const c = stateColors(iss.state?.type)
                 const isSelected = selectedId === iss.identifier
+                const child = !!isChild[id]
+                const h = rowH[id]
+                const STUB = 22
                 return (
                   <div
                     key={id}
                     className={`gantt-label-row ${isSelected ? 'gantt-label-row-sel' : ''}`}
-                    style={{ height: rowH[id] }}
+                    style={{ height: h, paddingLeft: child ? STUB + 6 : undefined, opacity: child ? 0.85 : 1, background: child ? 'rgba(255,255,255,0.025)' : undefined }}
                     onClick={() => handleSelect(iss.identifier)}
                     title={iss.title}
                   >
@@ -323,6 +455,46 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
                   </div>
                 )
               })}
+
+              {/* Tree connector overlay — one SVG spanning the full label column height */}
+              {(() => {
+                const TX = 12, STUB = 22
+                const lines: React.ReactNode[] = []
+                for (const id of orderedTopo) {
+                  const children = childrenOf[id]
+                  if (children?.length) {
+                    // vertical guide from bottom of parent row down to midpoint of last child
+                    const lastChildId = children[children.length - 1]
+                    const parentBottom = rowY[id] - HDR_H + rowH[id]
+                    const lastChildMid = rowY[lastChildId] != null
+                      ? rowY[lastChildId] - HDR_H + rowH[lastChildId] / 2
+                      : parentBottom
+                    lines.push(
+                      <line key={`tp-${id}`} x1={TX} y1={parentBottom} x2={TX} y2={lastChildMid}
+                        stroke="#ffffff" strokeWidth={1} strokeOpacity={0.08} />
+                    )
+                  }
+                  if (isChild[id]) {
+                    const siblings = childrenOf[parentOf[id]] ?? []
+                    const isLast = siblings[siblings.length - 1] === id
+                    const y = rowY[id] - HDR_H
+                    const h = rowH[id]
+                    lines.push(
+                      <g key={`tc-${id}`}>
+                        <line x1={TX} y1={y} x2={TX} y2={isLast ? y + h / 2 : y + h} stroke="#ffffff" strokeWidth={1} strokeOpacity={0.08} />
+                        <line x1={TX} y1={y + h / 2} x2={STUB} y2={y + h / 2} stroke="#ffffff" strokeWidth={1} strokeOpacity={0.08} />
+                      </g>
+                    )
+                  }
+                }
+                const totalH = svgH - HDR_H
+                return (
+                  <svg width={STUB} height={totalH}
+                    style={{ position: 'absolute', left: 0, top: HDR_H, pointerEvents: 'none' }}>
+                    {lines}
+                  </svg>
+                )
+              })()}
 
               {/* Resize handle */}
               <div className="gantt-col-resize" onMouseDown={onResizeMouseDown} />
@@ -349,37 +521,78 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
                 </marker>
               </defs>
 
-              {weekendXs.map(x => (
-                <rect key={x} x={x} y={0} width={DAY_W} height={svgH} fill="#070712" />
+              {/* Cycle column backgrounds */}
+              {cycleCols.map(col => (
+                <rect key={col.id} x={col.x} y={HDR_H} width={col.w} height={svgH - HDR_H}
+                  fill={col.isCurrent ? 'rgba(124,58,237,0.06)' : 'transparent'} />
               ))}
 
-              {topo.map(id => (
+              {orderedTopo.map(id => (
                 <rect
                   key={id}
                   x={0} y={ry(id)} width={svgW} height={rowH[id]}
-                  fill={selectedId === id ? 'rgba(124,58,237,0.07)' : 'transparent'}
+                  fill={selectedId === id ? 'rgba(124,58,237,0.07)' : isChild[id] ? 'rgba(255,255,255,0.025)' : 'transparent'}
                   style={{ cursor: 'pointer' }}
                   onClick={() => handleSelect(id)}
                 />
               ))}
 
-              {topo.map(id => (
+              {orderedTopo.map(id => (
                 <line key={id} x1={0} y1={ry(id)} x2={svgW} y2={ry(id)} stroke="#111120" />
               ))}
               <line x1={0} y1={svgH} x2={svgW} y2={svgH} stroke="#111120" />
 
+              {/* Tree connector lines in SVG — mirror the label column guides */}
+              {orderedTopo.map(id => {
+                const TX = 12, STUB = 22
+                const children = childrenOf[id]
+                if (children?.length) {
+                  // parent: vertical guide from bottom of parent row to midpoint of last child row
+                  const lastChildId = children[children.length - 1]
+                  const parentY = ry(id) + rowH[id]
+                  const lastChildMid = rowY[lastChildId] != null ? rowY[lastChildId] + rowH[lastChildId] / 2 : parentY
+                  return (
+                    <line key={`tree-p-${id}`} x1={TX} y1={parentY} x2={TX} y2={lastChildMid}
+                      stroke="#ffffff" strokeWidth={1} strokeOpacity={0.08} style={{ pointerEvents: 'none' }} />
+                  )
+                }
+                if (!isChild[id]) return null
+                const siblings = childrenOf[parentOf[id]] ?? []
+                const isLast = siblings[siblings.length - 1] === id
+                const y = ry(id)
+                const h = rowH[id]
+                return (
+                  <g key={`tree-${id}`} style={{ pointerEvents: 'none' }}>
+                    <line x1={TX} y1={y} x2={TX} y2={isLast ? y + h / 2 : y + h} stroke="#ffffff" strokeWidth={1} strokeOpacity={0.08} />
+                    <line x1={TX} y1={y + h / 2} x2={STUB} y2={y + h / 2} stroke="#ffffff" strokeWidth={1} strokeOpacity={0.08} />
+                  </g>
+                )
+              })}
+
               <rect x={0} y={0} width={svgW} height={HDR_H} fill="#10101c" />
               <line x1={0} y1={HDR_H} x2={svgW} y2={HDR_H} stroke="#1e1e30" />
 
-              {monthMarks.map(m => (
-                <text key={m.x} x={m.x + 5} y={18} fill="#4b5563" fontSize={11} fontFamily="-apple-system,sans-serif">{m.label}</text>
-              ))}
-              {weekMarks.map(w => (
-                <g key={w.x}>
-                  <line x1={w.x} y1={24} x2={w.x} y2={HDR_H} stroke="#1e1e30" />
-                  <text x={w.x + 3} y={40} fill="#374151" fontSize={10} fontFamily="-apple-system,sans-serif">{w.day}</text>
-                </g>
-              ))}
+              {/* Cycle column headers */}
+              {cycleCols.map(col => {
+                const dateFmt = (d: Date) => d.toLocaleDateString('en', { month: 'short', day: 'numeric' })
+                return (
+                  <g key={col.id}>
+                    <line x1={col.x} y1={0} x2={col.x} y2={svgH} stroke="#1e1e30" />
+                    <clipPath id={`hdr-${col.id}`}>
+                      <rect x={col.x} y={0} width={col.w - 2} height={HDR_H} />
+                    </clipPath>
+                    <text x={col.x + 6} y={17} fill={col.isCurrent ? '#a78bfa' : '#4b5563'}
+                      fontSize={11} fontWeight={col.isCurrent ? '600' : '400'}
+                      fontFamily="-apple-system,sans-serif" clipPath={`url(#hdr-${col.id})`}>
+                      {col.label}
+                    </text>
+                    <text x={col.x + 6} y={34} fill="#374151" fontSize={10}
+                      fontFamily="-apple-system,sans-serif" clipPath={`url(#hdr-${col.id})`}>
+                      {dateFmt(col.start)} – {dateFmt(col.end)}
+                    </text>
+                  </g>
+                )
+              })}
 
               {todayX >= 0 && todayX <= svgW && (
                 <g>
@@ -398,7 +611,7 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
                     <path d={d} fill="none" stroke="transparent" strokeWidth={12}
                       onMouseEnter={() => setHoveredArrow(a.relationId)}
                       onMouseLeave={() => setHoveredArrow(null)}
-                      onClick={e => {
+                      onClick={_e => {
                         if (!a.relationId) return
                         const svgRect = svgRef.current!.getBoundingClientRect()
                         const mx = (a.ax1 + a.ax2) / 2
@@ -432,6 +645,7 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
                 const isSelected = selectedId === b.id
                 const rh = rowH[b.id]
                 const barH = rh - BAR_PAD * 2
+                const child = !!isChild[b.id]
                 return (
                   <g key={b.id}>
                     <g
@@ -443,6 +657,7 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
                       <rect
                         x={b.x + 1} y={b.y + BAR_PAD} width={b.w} height={barH}
                         rx={3} fill={b.c.fill} stroke={b.c.stroke} strokeWidth={isSelected ? 2 : 1}
+                        strokeDasharray={child ? '4 3' : undefined}
                         opacity={isSelected ? 1 : 0.85}
                       />
                       {b.w > 28 && (
@@ -532,13 +747,29 @@ export default function GanttChart({ issues, apiKey, onRefresh }: Props) {
         </div>
       )}
 
+      {hasSidebar && (
+        <div
+          style={{
+            width: 5,
+            flexShrink: 0,
+            cursor: 'col-resize',
+            background: 'transparent',
+            borderLeft: '1px solid #1e1e30',
+            transition: 'background 0.15s',
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = '#7c3aed' }}
+          onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = 'transparent' }}
+          onMouseDown={onGanttResizeMouseDown}
+        />
+      )}
+
       {selectedIssue && sched[selectedIssue.identifier] && (
         <IssueDetail
           issue={selectedIssue}
           sched={sched[selectedIssue.identifier]}
           blockedBy={blockedByMap[selectedIssue.identifier] ?? []}
           blocks={blocksMap[selectedIssue.identifier] ?? []}
-          onClose={() => setSelectedId(null)}
+          onClose={() => { setSelectedId(null); setGanttW(null) }}
           onSelect={iss => setSelectedId(iss.identifier)}
         />
       )}

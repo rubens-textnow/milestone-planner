@@ -17,6 +17,14 @@ export interface Milestone {
   sortOrder: number
 }
 
+export interface Cycle {
+  id: string
+  number: number
+  name: string
+  startsAt: string
+  endsAt: string
+}
+
 export interface IssueRelation {
   id: string
   type: string
@@ -35,6 +43,7 @@ export interface Issue {
   dueDate: string | null
   state: { name: string; type: string } | null
   assignee: { displayName: string } | null
+  parent: { id: string; identifier: string } | null
   relations: { nodes: IssueRelation[] }
   inverseRelations: { nodes: IssueRelation[] }
 }

@@ -25,6 +25,12 @@ export const Q_MILESTONES = `query($id:String!){
   project(id:$id){ projectMilestones(first:250){ nodes{ id name sortOrder } } }
 }`
 
+export const Q_CYCLES = `query($teamId:String!){
+  team(id:$teamId){
+    cycles(first:250){ nodes{ id number name startsAt endsAt } }
+  }
+}`
+
 export const M_CREATE_RELATION = `mutation($issueId:String!, $relatedIssueId:String!, $type:IssueRelationType!){
   issueRelationCreate(input:{ issueId:$issueId, relatedIssueId:$relatedIssueId, type:$type }){
     success
@@ -42,6 +48,7 @@ export const Q_ISSUES = `query($mid:ID!){
       createdAt startedAt completedAt dueDate
       state{ name type }
       assignee{ displayName }
+      parent{ id identifier }
       relations       { nodes{ id type relatedIssue{ id identifier } } }
       inverseRelations{ nodes{ id type relatedIssue{ id identifier } } }
     }
