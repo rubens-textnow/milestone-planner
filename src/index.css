@@ -30,7 +30,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .bc-sep { color: #374151; }
 
 /* ── Drill panels ── */
-.content { flex: 1; display: flex; overflow: hidden; }
+.content { flex: 1; display: flex; overflow-x: auto; overflow-y: hidden; }
 .panel { width: 260px; border-right: 1px solid #1a1a28; display: flex; flex-direction: column; flex-shrink: 0; background: #0f0f1c; overflow: hidden; }
 .panel-header { padding: 12px 14px 8px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #4b5563; flex-shrink: 0; }
 .panel-list { overflow-y: auto; flex: 1; }
@@ -87,7 +87,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .gantt-label-row-sel { background: #1a1535 !important; border-left: 3px solid #7c3aed; padding-left: 9px; }
 
 /* ── Issue detail panel ── */
-.detail-panel { width: 50%; border-left: 1px solid #1e1e30; background: #0f0f1c; display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; }
+.detail-panel { width: 360px; border-left: 1px solid #1e1e30; background: #0f0f1c; display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; }
 .detail-header { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid #1e1e30; flex-shrink: 0; }
 .detail-identifier { font-family: monospace; font-size: 12px; font-weight: 600; }
 .detail-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
