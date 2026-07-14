@@ -57,9 +57,10 @@ interface Props {
   apiKey: string
   onRefresh: () => void
   cycles: Cycle[]
+  embedded?: boolean  // when true: natural height, no sidebar, no outer flex wrapper sizing
 }
 
-export default function GanttChart({ issues, apiKey, onRefresh, cycles }: Props) {
+export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded }: Props) {
   const [tip, setTip] = useState<TooltipState | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -122,8 +123,8 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles }: Props)
   useEffect(() => () => { resizingRef.current = false; ganttResizingRef.current = false }, [])
 
   if (!issues.length) return (
-    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#374151', fontSize: 13 }}>
-      This milestone has no issues.
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#374151', fontSize: 13, padding: '24px 0' }}>
+      No issues in this milestone.
     </div>
   )
 
@@ -412,16 +413,16 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles }: Props)
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', minWidth: 0, overflow: 'hidden' }}>
+    <div style={embedded ? { display: 'flex', minWidth: 0 } : { flex: 1, display: 'flex', minWidth: 0, overflow: 'hidden' }}>
       <div
         ref={ganttOuterRef}
         style={{
           display: 'flex',
           flexDirection: 'column',
-          overflow: 'hidden',
-          flexShrink: 0,
-          width: ganttW != null ? ganttW : hasSidebar ? '60%' : '100%',
-          minWidth: '50vw',
+          overflow: embedded ? 'visible' : 'hidden',
+          flexShrink: embedded ? 1 : 0,
+          width: embedded ? '100%' : (ganttW != null ? ganttW : hasSidebar ? '60%' : '100%'),
+          minWidth: embedded ? 0 : '50vw',
         }}
       >
         {(cycleWarnings.length > 0 || working) && (
@@ -429,7 +430,7 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles }: Props)
             {working ? 'Saving…' : `⚠ Dependency cycle(s) detected — schedule approximated. ${cycleWarnings.join(' | ')}`}
           </div>
         )}
-        <div className="gantt-wrap">
+        <div className={embedded ? 'gantt-wrap-embedded' : 'gantt-wrap'}>
           <div className="gantt-inner">
             {/* Sticky labels column */}
             <div className="gantt-labels" style={{ width: lblW, position: 'relative' }}>
@@ -747,7 +748,7 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles }: Props)
         </div>
       )}
 
-      {hasSidebar && (
+      {!embedded && hasSidebar && (
         <div
           style={{
             width: 5,
@@ -763,7 +764,7 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles }: Props)
         />
       )}
 
-      {selectedIssue && sched[selectedIssue.identifier] && (
+      {!embedded && selectedIssue && sched[selectedIssue.identifier] && (
         <IssueDetail
           issue={selectedIssue}
           sched={sched[selectedIssue.identifier]}

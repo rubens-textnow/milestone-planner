@@ -9,6 +9,7 @@ export interface Project {
   name: string
   icon: string | null
   color: string | null
+  status: { type: string } | null
 }
 
 export interface Milestone {

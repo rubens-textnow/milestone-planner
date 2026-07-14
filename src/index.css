@@ -41,6 +41,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .project-icon { width: 20px; height: 20px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0; opacity: 0.85; }
 .panel-empty { padding: 14px; color: #4b5563; font-size: 12px; }
 .panel-search { padding: 8px 10px; flex-shrink: 0; border-bottom: 1px solid #1a1a28; }
+.panel-status-filter { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 10px; border-bottom: 1px solid #1a1a28; flex-shrink: 0; }
+.status-chip { background: #12121e; border: 1px solid #2d2d44; border-radius: 20px; padding: 3px 9px; font-size: 11px; color: #6b7280; cursor: pointer; transition: background 0.1s, color 0.1s, border-color 0.1s; }
+.status-chip:hover { border-color: #4b5563; color: #9ca3af; }
+.status-chip-on { color: #e2e8f0; border-color: currentColor; }
+.status-chip-backlog.status-chip-on   { color: #6b7280; }
+.status-chip-planned.status-chip-on   { color: #60a5fa; }
+.status-chip-inProgress.status-chip-on { color: #a78bfa; }
+.status-chip-paused.status-chip-on    { color: #fbbf24; }
+.status-chip-completed.status-chip-on { color: #34d399; }
+.status-chip-cancelled.status-chip-on { color: #f87171; }
 .panel-search-input { width: 100%; background: #0a0a14; border: 1px solid #2d2d44; border-radius: 6px; padding: 6px 10px; color: #e2e8f0; font-size: 12px; outline: none; transition: border-color 0.15s; }
 .panel-search-input:focus { border-color: #7c3aed; }
 .fav-btn { background: none; border: none; cursor: pointer; color: #374151; font-size: 14px; line-height: 1; padding: 2px 3px; border-radius: 3px; flex-shrink: 0; transition: color 0.1s; }
@@ -54,8 +64,19 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-row { display: flex; align-items: center; justify-content: center; gap: 10px; color: #4b5563; font-size: 13px; padding: 48px; }
 
+/* ── Project view (all milestones) ── */
+.project-view { flex: 1; overflow-y: auto; overflow-x: hidden; }
+.milestone-section { border-bottom: 1px solid #1a1a28; }
+.milestone-header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; cursor: pointer; background: #10101c; position: sticky; top: 0; z-index: 30; border-bottom: 1px solid #1e1e30; user-select: none; }
+.milestone-header:hover { background: #13131f; }
+.milestone-chevron { color: #4b5563; font-size: 10px; width: 12px; flex-shrink: 0; }
+.milestone-name { font-size: 13px; font-weight: 600; color: #c4b5fd; flex: 1; }
+.milestone-count { font-size: 11px; color: #4b5563; flex-shrink: 0; }
+.milestone-body { overflow-x: auto; }
+
 /* ── Gantt ── */
 .gantt-wrap { flex: 1; overflow: auto; }
+.gantt-wrap-embedded { overflow-x: auto; }
 .gantt-inner { display: inline-flex; min-width: 100%; min-height: 100%; }
 .gantt-labels { position: sticky; left: 0; z-index: 20; background: #0d0d14; flex-shrink: 0; border-right: 1px solid #1e1e30; isolation: isolate; }
 .gantt-label-header { background: #10101c; border-bottom: 1px solid #1e1e30; display: flex; align-items: center; padding: 0 12px; font-size: 10.5px; color: #4b5563; text-transform: uppercase; letter-spacing: 0.7px; }
