@@ -2,7 +2,6 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import type { Issue, Cycle } from './types'
 import { buildSchedule, stateColors, sod, addD, MS } from './schedule'
 import { gql, M_CREATE_RELATION, M_DELETE_RELATION } from './api'
-import IssueDetail from './IssueDetail'
 
 const ROW_H = 36
 const DAY_W = 26
@@ -57,17 +56,23 @@ interface Props {
   apiKey: string
   onRefresh: () => void
   cycles: Cycle[]
-  embedded?: boolean  // when true: natural height, no sidebar, no outer flex wrapper sizing
+  embedded?: boolean
+  selectedId?: string | null
+  onSelectId?: (id: string | null) => void
 }
 
-export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded }: Props) {
+export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded, selectedId: selectedIdProp, onSelectId }: Props) {
   const [tip, setTip] = useState<TooltipState | null>(null)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedIdLocal, setSelectedIdLocal] = useState<string | null>(null)
+  const selectedId = selectedIdProp !== undefined ? selectedIdProp : selectedIdLocal
   const [drag, setDrag] = useState<DragState | null>(null)
   const [hoveredArrow, setHoveredArrow] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{ relationId: string; x: number; y: number } | null>(null)
   const [working, setWorking] = useState(false)
-  const [lblW, setLblW] = useState(DEFAULT_LBL_W)
+  const [lblW, setLblW] = useState(() => {
+    const saved = localStorage.getItem('lgk-lbl-w')
+    return saved ? Math.max(MIN_LBL_W, Number(saved)) : DEFAULT_LBL_W
+  })
   const [ganttW, setGanttW] = useState<number | null>(null)
   const resizingRef = useRef(false)
   const resizeStartX = useRef(0)
@@ -92,6 +97,7 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
     }
     function onUp() {
       resizingRef.current = false
+      setLblW(prev => { localStorage.setItem('lgk-lbl-w', String(prev)); return prev })
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
@@ -165,7 +171,6 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
   }
 
   const selectedIssue = selectedId ? issues.find(i => i.identifier === selectedId) ?? null : null
-  const hasSidebar = !!(selectedIssue && sched[selectedIssue.identifier])
 
   const blockedByMap: Record<string, Issue[]> = {}
   const blocksMap: Record<string, Issue[]> = {}
@@ -332,7 +337,11 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
   function handleSelect(identifier: string) {
     if (drag) return
     setTip(null)
-    setSelectedId(prev => prev === identifier ? null : identifier)
+    if (onSelectId) {
+      onSelectId(selectedId === identifier ? null : identifier)
+    } else {
+      setSelectedIdLocal(prev => prev === identifier ? null : identifier)
+    }
   }
 
   function svgPoint(e: React.MouseEvent): { x: number; y: number } | null {
@@ -421,7 +430,7 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
           flexDirection: 'column',
           overflow: embedded ? 'visible' : 'hidden',
           flexShrink: embedded ? 1 : 0,
-          width: embedded ? '100%' : (ganttW != null ? ganttW : hasSidebar ? '60%' : '100%'),
+          width: embedded ? '100%' : (ganttW != null ? ganttW : '100%'),
           minWidth: embedded ? 0 : '50vw',
         }}
       >
@@ -748,32 +757,6 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
         </div>
       )}
 
-      {!embedded && hasSidebar && (
-        <div
-          style={{
-            width: 5,
-            flexShrink: 0,
-            cursor: 'col-resize',
-            background: 'transparent',
-            borderLeft: '1px solid #1e1e30',
-            transition: 'background 0.15s',
-          }}
-          onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = '#7c3aed' }}
-          onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = 'transparent' }}
-          onMouseDown={onGanttResizeMouseDown}
-        />
-      )}
-
-      {!embedded && selectedIssue && sched[selectedIssue.identifier] && (
-        <IssueDetail
-          issue={selectedIssue}
-          sched={sched[selectedIssue.identifier]}
-          blockedBy={blockedByMap[selectedIssue.identifier] ?? []}
-          blocks={blocksMap[selectedIssue.identifier] ?? []}
-          onClose={() => { setSelectedId(null); setGanttW(null) }}
-          onSelect={iss => setSelectedId(iss.identifier)}
-        />
-      )}
     </div>
   )
 }

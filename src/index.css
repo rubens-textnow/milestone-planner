@@ -65,7 +65,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .loading-row { display: flex; align-items: center; justify-content: center; gap: 10px; color: #4b5563; font-size: 13px; padding: 48px; }
 
 /* ── Project view (all milestones) ── */
-.project-view { flex: 1; overflow-y: auto; overflow-x: hidden; }
+.project-split { flex: 1; display: flex; overflow: hidden; }
+.project-view { flex: 1; overflow-y: auto; overflow-x: hidden; min-width: 0; }
 .milestone-section { border-bottom: 1px solid #1a1a28; }
 .milestone-header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; cursor: pointer; background: #10101c; position: sticky; top: 0; z-index: 30; border-bottom: 1px solid #1e1e30; user-select: none; }
 .milestone-header:hover { background: #13131f; }
@@ -108,7 +109,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .gantt-label-row-sel { background: #1a1535 !important; border-left: 3px solid #7c3aed; padding-left: 9px; }
 
 /* ── Issue detail panel ── */
-.detail-panel { width: 360px; border-left: 1px solid #1e1e30; background: #0f0f1c; display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; }
+.detail-panel { width: 50%; border-left: 1px solid #1e1e30; background: #0f0f1c; display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; }
 .detail-header { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid #1e1e30; flex-shrink: 0; }
 .detail-identifier { font-family: monospace; font-size: 12px; font-weight: 600; }
 .detail-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }

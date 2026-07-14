@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import type { Team, Project, Milestone, Issue, Cycle } from './types'
 import { gql, Q_TEAMS, Q_PROJECTS, Q_MILESTONES, Q_ISSUES, Q_ISSUES_NO_MILESTONE, Q_CYCLES } from './api'
+import { buildSchedule } from './schedule'
 import GanttChart from './GanttChart'
+import IssueDetail from './IssueDetail'
 
 const STATUS_LABELS: Record<string, string> = {
   backlog: 'Backlog',
@@ -28,6 +30,7 @@ export default function App() {
   const [unmilestoned, setUnmilestoned] = useState<Issue[]>([])
   const [unmilestoneLoading, setUnmilestoneLoading] = useState(false)
   const [unmilestoneCollapsed, setUnmilestoneCollapsed] = useState(false)
+  const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null)
 
   const [teamSearch, setTeamSearch] = useState('')
   const [projectStatusFilter, setProjectStatusFilter] = useState<Set<string>>(new Set())
@@ -76,6 +79,7 @@ export default function App() {
     setCollapsedMiles(new Set())
     setUnmilestoned([])
     setUnmilestoneCollapsed(false)
+    setSelectedIssueId(null)
     load(() => gql<{ project: { projectMilestones: { nodes: Milestone[] } } }>(apiKey, Q_MILESTONES, { id: projectId })
       .then(d => {
         const sorted = [...d.project.projectMilestones.nodes].sort((a, b) => a.sortOrder - b.sortOrder)
@@ -317,84 +321,125 @@ export default function App() {
         </div>
       )}
 
-      {showProjectView && (
-        <div className="project-view">
-          {!loading && miles.length === 0 && !unmilestoneLoading && unmilestoned.length === 0 && (
-            <div className="placeholder" style={{ padding: '48px 0' }}>No milestones in this project</div>
-          )}
-          {(unmilestoneLoading || unmilestoned.length > 0) && (
-            <div className="milestone-section">
-              <div className="milestone-header" onClick={() => setUnmilestoneCollapsed(v => !v)}>
-                <span className="milestone-chevron">{unmilestoneCollapsed ? '▶' : '▼'}</span>
-                <span className="milestone-name" style={{ color: '#6b7280' }}>No milestone</span>
-                {unmilestoneLoading && <div className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />}
-                {!unmilestoneLoading && (
-                  <span className="milestone-count">{unmilestoned.length} issue{unmilestoned.length !== 1 ? 's' : ''}</span>
-                )}
-              </div>
-              {!unmilestoneCollapsed && (
-                <div className="milestone-body">
-                  {unmilestoneLoading && (
-                    <div className="loading-row" style={{ padding: '20px 0' }}>
-                      <div className="spinner" />Loading issues…
+      {showProjectView && (() => {
+        const allIssues = [...unmilestoned, ...Object.values(milestoneIssues).flat()]
+        const byId = Object.fromEntries(allIssues.map(i => [i.id, i]))
+        const selectedIssue = selectedIssueId ? allIssues.find(i => i.identifier === selectedIssueId) ?? null : null
+        const { sched: allSched } = selectedIssue
+          ? buildSchedule(allIssues.filter(i => {
+              const milestoneOfSelected = miles.find(m => (milestoneIssues[m.id] ?? []).some(x => x.identifier === selectedIssueId))
+              if (!milestoneOfSelected) return unmilestoned.some(x => x.id === i.id)
+              return (milestoneIssues[milestoneOfSelected.id] ?? []).some(x => x.id === i.id)
+            }))
+          : { sched: {} }
+
+        const blockedByMap: Record<string, Issue[]> = {}
+        const blocksMap: Record<string, Issue[]> = {}
+        for (const iss of allIssues) { blockedByMap[iss.identifier] = []; blocksMap[iss.identifier] = [] }
+        for (const iss of allIssues) {
+          for (const r of iss.relations?.nodes ?? []) {
+            if (r.type === 'blocks' && byId[r.relatedIssue.id]) {
+              blocksMap[iss.identifier].push(byId[r.relatedIssue.id])
+              blockedByMap[r.relatedIssue.identifier]?.push(iss)
+            }
+          }
+        }
+
+        return (
+          <div className="project-split">
+            <div className="project-view">
+              {!loading && miles.length === 0 && !unmilestoneLoading && unmilestoned.length === 0 && (
+                <div className="placeholder" style={{ padding: '48px 0' }}>No milestones in this project</div>
+              )}
+              {(unmilestoneLoading || unmilestoned.length > 0) && (
+                <div className="milestone-section">
+                  <div className="milestone-header" onClick={() => setUnmilestoneCollapsed(v => !v)}>
+                    <span className="milestone-chevron">{unmilestoneCollapsed ? '▶' : '▼'}</span>
+                    <span className="milestone-name" style={{ color: '#6b7280' }}>No milestone</span>
+                    {unmilestoneLoading && <div className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />}
+                    {!unmilestoneLoading && (
+                      <span className="milestone-count">{unmilestoned.length} issue{unmilestoned.length !== 1 ? 's' : ''}</span>
+                    )}
+                  </div>
+                  {!unmilestoneCollapsed && (
+                    <div className="milestone-body">
+                      {unmilestoneLoading && (
+                        <div className="loading-row" style={{ padding: '20px 0' }}>
+                          <div className="spinner" />Loading issues…
+                        </div>
+                      )}
+                      {!unmilestoneLoading && (
+                        <GanttChart
+                          issues={unmilestoned}
+                          apiKey={apiKey}
+                          onRefresh={() => {
+                            setUnmilestoneLoading(true)
+                            gql<{ issues: { nodes: Issue[] } }>(apiKey, Q_ISSUES_NO_MILESTONE, { pid: projectId! })
+                              .then(d => setUnmilestoned(d.issues.nodes))
+                              .catch(e => setError((e as Error).message))
+                              .finally(() => setUnmilestoneLoading(false))
+                          }}
+                          cycles={cycles}
+                          embedded
+                          selectedId={selectedIssueId}
+                          onSelectId={setSelectedIssueId}
+                        />
+                      )}
                     </div>
-                  )}
-                  {!unmilestoneLoading && (
-                    <GanttChart
-                      issues={unmilestoned}
-                      apiKey={apiKey}
-                      onRefresh={() => {
-                        setUnmilestoneLoading(true)
-                        gql<{ issues: { nodes: Issue[] } }>(apiKey, Q_ISSUES_NO_MILESTONE, { pid: projectId! })
-                          .then(d => setUnmilestoned(d.issues.nodes))
-                          .catch(e => setError((e as Error).message))
-                          .finally(() => setUnmilestoneLoading(false))
-                      }}
-                      cycles={cycles}
-                      embedded
-                    />
                   )}
                 </div>
               )}
-            </div>
-          )}
-          {miles.map(m => {
-            const issues = milestoneIssues[m.id] ?? null
-            const isLoading = milestoneLoading[m.id] ?? false
-            const collapsed = collapsedMiles.has(m.id)
-            return (
-              <div key={m.id} className="milestone-section">
-                <div className="milestone-header" onClick={() => toggleCollapse(m.id)}>
-                  <span className="milestone-chevron">{collapsed ? '▶' : '▼'}</span>
-                  <span className="milestone-name">{m.name}</span>
-                  {isLoading && <div className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />}
-                  {issues !== null && !isLoading && (
-                    <span className="milestone-count">{issues.length} issue{issues.length !== 1 ? 's' : ''}</span>
-                  )}
-                </div>
-                {!collapsed && (
-                  <div className="milestone-body">
-                    {isLoading && (
-                      <div className="loading-row" style={{ padding: '20px 0' }}>
-                        <div className="spinner" />Loading issues…
+              {miles.map(m => {
+                const issues = milestoneIssues[m.id] ?? null
+                const isLoading = milestoneLoading[m.id] ?? false
+                const collapsed = collapsedMiles.has(m.id)
+                return (
+                  <div key={m.id} className="milestone-section">
+                    <div className="milestone-header" onClick={() => toggleCollapse(m.id)}>
+                      <span className="milestone-chevron">{collapsed ? '▶' : '▼'}</span>
+                      <span className="milestone-name">{m.name}</span>
+                      {isLoading && <div className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />}
+                      {issues !== null && !isLoading && (
+                        <span className="milestone-count">{issues.length} issue{issues.length !== 1 ? 's' : ''}</span>
+                      )}
+                    </div>
+                    {!collapsed && (
+                      <div className="milestone-body">
+                        {isLoading && (
+                          <div className="loading-row" style={{ padding: '20px 0' }}>
+                            <div className="spinner" />Loading issues…
+                          </div>
+                        )}
+                        {!isLoading && issues !== null && (
+                          <GanttChart
+                            issues={issues}
+                            apiKey={apiKey}
+                            onRefresh={() => refreshMilestone(m.id)}
+                            cycles={cycles}
+                            embedded
+                            selectedId={selectedIssueId}
+                            onSelectId={setSelectedIssueId}
+                          />
+                        )}
                       </div>
                     )}
-                    {!isLoading && issues !== null && (
-                      <GanttChart
-                        issues={issues}
-                        apiKey={apiKey}
-                        onRefresh={() => refreshMilestone(m.id)}
-                        cycles={cycles}
-                        embedded
-                      />
-                    )}
                   </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
+                )
+              })}
+            </div>
+            {selectedIssue && allSched[selectedIssue.identifier] && (
+              <IssueDetail
+                issue={selectedIssue}
+                sched={allSched[selectedIssue.identifier]}
+                blockedBy={blockedByMap[selectedIssue.identifier] ?? []}
+                blocks={blocksMap[selectedIssue.identifier] ?? []}
+                onClose={() => setSelectedIssueId(null)}
+                onSelect={iss => setSelectedIssueId(iss.identifier)}
+              />
+            )}
+          </div>
+        )
+      })()}
     </div>
   )
 }
