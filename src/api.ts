@@ -18,7 +18,7 @@ export async function gql<T>(key: string, query: string, vars: Record<string, un
 export const Q_TEAMS = `query { teams(first:250){ nodes{ id name key } } }`
 
 export const Q_PROJECTS = `query($id:String!){
-  team(id:$id){ projects(first:250){ nodes{ id name icon color } } }
+  team(id:$id){ projects(first:250){ nodes{ id name icon color status { type } } } }
 }`
 
 export const Q_MILESTONES = `query($id:String!){
@@ -39,6 +39,20 @@ export const M_CREATE_RELATION = `mutation($issueId:String!, $relatedIssueId:Str
 
 export const M_DELETE_RELATION = `mutation($id:String!){
   issueRelationDelete(id:$id){ success }
+}`
+
+export const Q_ISSUES_NO_MILESTONE = `query($pid:ID!){
+  issues(first:250, filter:{ project:{ id:{ eq:$pid } }, projectMilestone:{ null: true } }){
+    nodes{
+      id identifier title description estimate
+      createdAt startedAt completedAt dueDate
+      state{ name type }
+      assignee{ displayName }
+      parent{ id identifier }
+      relations       { nodes{ id type relatedIssue{ id identifier } } }
+      inverseRelations{ nodes{ id type relatedIssue{ id identifier } } }
+    }
+  }
 }`
 
 export const Q_ISSUES = `query($mid:ID!){
