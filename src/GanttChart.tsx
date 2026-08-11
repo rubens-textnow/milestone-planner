@@ -42,7 +42,6 @@ interface DragState {
 interface ArrowMeta {
   ax1: number; ay1: number
   ax2: number; ay2: number
-  ctrl: number
   relationId: string
   blockerIden: string
   blockedIden: string
@@ -134,9 +133,18 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
     </div>
   )
 
-  const { sched, topo, outgoing, cycleWarnings } = buildSchedule(issues)
+  const isDuplicate = (iss: Issue | undefined) => iss?.state?.name?.toLowerCase() === 'duplicate'
+
+  const { sched, topo, outgoing: rawOutgoing, cycleWarnings } = buildSchedule(issues)
   const byIden = Object.fromEntries(issues.map(i => [i.identifier, i]))
   const byId = Object.fromEntries(issues.map(i => [i.id, i]))
+
+  // Strip duplicate issues from dependency graph
+  const outgoing: Record<string, Set<string>> = {}
+  for (const [id, targets] of Object.entries(rawOutgoing)) {
+    if (isDuplicate(byIden[id])) { outgoing[id] = new Set(); continue }
+    outgoing[id] = new Set([...targets].filter(t => !isDuplicate(byIden[t])))
+  }
 
   // Build parent→children map (only for issues in this milestone)
   const childrenOf: Record<string, string[]> = {}
@@ -152,23 +160,33 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
     }
   }
 
-  // Reorder topo: each parent is immediately followed by its children
+  // Reorder topo: each parent is immediately followed by its children; duplicates go last
   const orderedTopo: string[] = []
   const inserted = new Set<string>()
+  const dupIds: string[] = []
   for (const id of topo) {
     if (inserted.has(id)) continue
+    if (isDuplicate(byIden[id])) { dupIds.push(id); inserted.add(id); continue }
     if (!isChild[id]) {
       orderedTopo.push(id)
       inserted.add(id)
       for (const childId of childrenOf[id] ?? []) {
-        if (!inserted.has(childId)) { orderedTopo.push(childId); inserted.add(childId) }
+        if (!inserted.has(childId)) {
+          if (isDuplicate(byIden[childId])) { dupIds.push(childId) }
+          else { orderedTopo.push(childId) }
+          inserted.add(childId)
+        }
       }
     }
   }
-  // catch any remaining (e.g. child whose parent isn't in this milestone)
   for (const id of topo) {
-    if (!inserted.has(id)) { orderedTopo.push(id); inserted.add(id) }
+    if (!inserted.has(id)) {
+      if (isDuplicate(byIden[id])) dupIds.push(id)
+      else orderedTopo.push(id)
+      inserted.add(id)
+    }
   }
+  orderedTopo.push(...dupIds)
 
   const selectedIssue = selectedId ? issues.find(i => i.identifier === selectedId) ?? null : null
 
@@ -186,8 +204,11 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
 
   const relationLookup: Record<string, string> = {}
   for (const iss of issues) {
+    if (isDuplicate(iss)) continue
     for (const r of iss.relations?.nodes ?? []) {
-      if (r.type === 'blocks') relationLookup[`${iss.identifier}→${r.relatedIssue.identifier}`] = r.id
+      if (r.type === 'blocks' && !isDuplicate(byId[r.relatedIssue.id])) {
+        relationLookup[`${iss.identifier}→${r.relatedIssue.identifier}`] = r.id
+      }
     }
   }
 
@@ -239,6 +260,14 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
     }
     if (!minD) minD = today
     if (!maxD) maxD = addD(today, 30)
+  }
+
+  // Clip minD forward: don't show empty space before the earliest useful date
+  const schedStarts = Object.values(sched).map(s => s.start)
+  if (schedStarts.length > 0) {
+    const minSchedStart = schedStarts.reduce((m, d) => d < m ? d : m)
+    const candidate = sod(new Date(Math.min(today.getTime(), minSchedStart.getTime())))
+    if (candidate > minD!) minD = candidate
   }
 
   const nDays = Math.ceil((maxD!.getTime() - minD!.getTime()) / MS) + 1
@@ -309,7 +338,7 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
     const pts = Math.max(1, Math.round(iss.estimate ?? 1))
     const w = pts * POINT_W
     const y = ry(id)
-    return [{ id, iss, x, w, y, s, c: stateColors(iss.state?.type) }]
+    return [{ id, iss, x, w, y, s, c: stateColors(iss.state?.type, iss.state?.name) }]
   })
   const barByIden = Object.fromEntries(bars.map(b => [b.id, b]))
 
@@ -319,18 +348,17 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
 
   const arrows: ArrowMeta[] = []
   for (const [fromId, toSet] of Object.entries(outgoing)) {
-    const fs = sched[fromId]
-    if (!fs || rowY[fromId] === undefined) continue
-    const ax1 = dx(fs.end) + DAY_W - 1
+    const fromBar = barByIden[fromId]
+    if (!fromBar || rowY[fromId] === undefined) continue
+    const ax1 = fromBar.x + fromBar.w
     const ay1 = ry(fromId) + rowH[fromId] / 2
     for (const toId of toSet) {
-      const ts = sched[toId]
-      if (!ts || rowY[toId] === undefined) continue
-      const ax2 = dx(ts.start)
+      const toBar = barByIden[toId]
+      if (!toBar || rowY[toId] === undefined) continue
+      const ax2 = toBar.x
       const ay2 = ry(toId) + rowH[toId] / 2
-      const ctrl = Math.max(40, Math.abs(ax2 - ax1) / 2)
       const relationId = relationLookup[`${fromId}→${toId}`] ?? ''
-      arrows.push({ ax1, ay1, ax2, ay2, ctrl, relationId, blockerIden: fromId, blockedIden: toId })
+      arrows.push({ ax1, ay1, ax2, ay2, relationId, blockerIden: fromId, blockedIden: toId })
     }
   }
 
@@ -447,7 +475,8 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
               {orderedTopo.map(id => {
                 const iss = byIden[id]
                 if (!iss) return null
-                const c = stateColors(iss.state?.type)
+                const dup = isDuplicate(iss)
+                const c = stateColors(iss.state?.type, iss.state?.name)
                 const isSelected = selectedId === iss.identifier
                 const child = !!isChild[id]
                 const h = rowH[id]
@@ -456,12 +485,12 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
                   <div
                     key={id}
                     className={`gantt-label-row ${isSelected ? 'gantt-label-row-sel' : ''}`}
-                    style={{ height: h, paddingLeft: child ? STUB + 6 : undefined, opacity: child ? 0.85 : 1, background: child ? 'rgba(255,255,255,0.025)' : undefined }}
+                    style={{ height: h, paddingLeft: child ? STUB + 6 : undefined, opacity: dup ? 0.4 : child ? 0.85 : 1, background: child ? 'rgba(255,255,255,0.025)' : undefined }}
                     onClick={() => handleSelect(iss.identifier)}
                     title={iss.title}
                   >
                     <span className="gantt-label-id" style={{ color: c.text }}>{iss.identifier}</span>
-                    <span className="gantt-label-title">{iss.title}</span>
+                    <span className="gantt-label-title" style={dup ? { textDecoration: 'line-through' } : undefined}>{iss.title}</span>
                   </div>
                 )
               })}
@@ -614,7 +643,8 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
               {arrows.map((a, i) => {
                 const isHov = hoveredArrow === a.relationId
                 const isConfirming = confirmDelete?.relationId === a.relationId
-                const d = `M ${a.ax1},${a.ay1} C ${a.ax1 + a.ctrl},${a.ay1} ${a.ax2 - a.ctrl},${a.ay2} ${a.ax2},${a.ay2}`
+                const midX = (a.ax1 + a.ax2) / 2
+                const d = `M ${a.ax1},${a.ay1} H ${midX} V ${a.ay2} H ${a.ax2}`
                 const active = isHov || isConfirming
                 return (
                   <g key={i} style={{ cursor: a.relationId ? 'pointer' : 'default' }}>
@@ -656,8 +686,9 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
                 const rh = rowH[b.id]
                 const barH = rh - BAR_PAD * 2
                 const child = !!isChild[b.id]
+                const dup = isDuplicate(b.iss)
                 return (
-                  <g key={b.id}>
+                  <g key={b.id} opacity={dup ? 0.3 : 1}>
                     <g
                       style={{ cursor: 'pointer' }}
                       onMouseMove={e => { if (!drag) setTip({ b, mx: e.clientX, my: e.clientY }) }}
@@ -667,7 +698,7 @@ export default function GanttChart({ issues, apiKey, onRefresh, cycles, embedded
                       <rect
                         x={b.x + 1} y={b.y + BAR_PAD} width={b.w} height={barH}
                         rx={3} fill={b.c.fill} stroke={b.c.stroke} strokeWidth={isSelected ? 2 : 1}
-                        strokeDasharray={child ? '4 3' : undefined}
+                        strokeDasharray={dup ? '4 3' : child ? '4 3' : undefined}
                         opacity={isSelected ? 1 : 0.85}
                       />
                       {b.w > 28 && (

@@ -5,6 +5,11 @@ const sod = (d: Date | string): Date => { const r = new Date(d); r.setHours(0, 0
 const addD = (d: Date, n: number): Date => new Date(d.getTime() + n * MS)
 const isWE = (d: Date): boolean => { const w = d.getDay(); return w === 0 || w === 6 }
 
+// Must match POINT_W / DAY_W in GanttChart (52 / 26 = 2): each story point
+// occupies this many calendar days in the bar width.
+const DAYS_PER_POINT = 2
+const GAP_DAYS = 1  // calendar-day gap between blocker bar's right edge and blocked bar's left edge
+
 function addWork(d: Date, n: number): Date {
   let c = sod(d), a = 0
   while (a < n) { c = addD(c, 1); if (!isWE(c)) a++ }
@@ -100,7 +105,14 @@ export function buildSchedule(issues: Issue[]): Schedule {
       let earliest = projStart
       for (const blocker of incomingC[id]) {
         const bs = sched[blocker]
-        if (bs) { const c = nextWork(bs.end); if (c > earliest) earliest = c }
+        if (bs) {
+          const blockerIss = byIden[blocker]
+          const blockerPts = Math.max(1, Math.round(blockerIss?.estimate ?? 1))
+          // visual bar end = start + (pts * DAYS_PER_POINT) calendar days, then +GAP_DAYS gap
+          const barEnd = addD(bs.start, blockerPts * DAYS_PER_POINT + GAP_DAYS)
+          const c = snapWork(barEnd)
+          if (c > earliest) earliest = c
+        }
       }
       const s = snapWork(earliest)
       sched[id] = { start: s, end: addWork(s, dur - 1), real: false }
@@ -110,11 +122,13 @@ export function buildSchedule(issues: Issue[]): Schedule {
   return { sched, topo, outgoing, cycleWarnings }
 }
 
-export function stateColors(type: string | undefined): { fill: string; stroke: string; text: string } {
+export function stateColors(type: string | undefined, name?: string | undefined): { fill: string; stroke: string; text: string } {
+  if (name?.toLowerCase() === 'blocked') return { fill: '#431407', stroke: '#ea580c', text: '#fdba74' }
   switch (type) {
     case 'completed': return { fill: '#14532d', stroke: '#22c55e', text: '#86efac' }
     case 'started':   return { fill: '#78350f', stroke: '#f59e0b', text: '#fcd34d' }
     case 'canceled':  return { fill: '#1c1c2e', stroke: '#4b5563', text: '#6b7280' }
+    case 'backlog':   return { fill: '#2d1b69', stroke: '#7c3aed', text: '#c4b5fd' }
     default:          return { fill: '#1e3a5f', stroke: '#3b82f6', text: '#93c5fd' }
   }
 }
