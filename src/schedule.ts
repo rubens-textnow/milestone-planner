@@ -75,10 +75,15 @@ export function buildSchedule(issues: Issue[]): Schedule {
   }
 
   const inDeg = Object.fromEntries(issues.map(i => [i.identifier, incomingC[i.identifier].size]))
+  // Among unblocked tasks, always pick the one earliest in the input (manual) order,
+  // so the row order deviates from Linear's manual order only where a dependency forces it.
+  const idxOf = Object.fromEntries(issues.map((i, idx) => [i.identifier, idx]))
   const queue = issues.filter(i => inDeg[i.identifier] === 0).map(i => i.identifier)
   const topo: string[] = []
   while (queue.length) {
-    const n = queue.shift()!
+    let best = 0
+    for (let k = 1; k < queue.length; k++) if (idxOf[queue[k]] < idxOf[queue[best]]) best = k
+    const n = queue.splice(best, 1)[0]
     topo.push(n)
     for (const m of outgoing[n]) {
       inDeg[m]--

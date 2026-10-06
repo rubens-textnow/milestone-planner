@@ -88,7 +88,7 @@ export default function App() {
       }))
     setUnmilestoneLoading(true)
     gql<{ issues: { nodes: Issue[] } }>(apiKey, Q_ISSUES_NO_MILESTONE, { pid: projectId })
-      .then(d => setUnmilestoned(d.issues.nodes))
+      .then(d => setUnmilestoned([...d.issues.nodes].sort((a, b) => b.sortOrder - a.sortOrder)))
       .catch(e => setError((e as Error).message))
       .finally(() => setUnmilestoneLoading(false))
   }, [projectId, apiKey])
@@ -96,7 +96,7 @@ export default function App() {
   function fetchMilestoneIssues(mid: string) {
     setMilestoneLoading(prev => ({ ...prev, [mid]: true }))
     gql<{ issues: { nodes: Issue[] } }>(apiKey, Q_ISSUES, { mid })
-      .then(d => setMilestoneIssues(prev => ({ ...prev, [mid]: d.issues.nodes })))
+      .then(d => setMilestoneIssues(prev => ({ ...prev, [mid]: [...d.issues.nodes].sort((a, b) => b.sortOrder - a.sortOrder) })))
       .catch(e => setError((e as Error).message))
       .finally(() => setMilestoneLoading(prev => ({ ...prev, [mid]: false })))
   }
@@ -375,7 +375,7 @@ export default function App() {
                           onRefresh={() => {
                             setUnmilestoneLoading(true)
                             gql<{ issues: { nodes: Issue[] } }>(apiKey, Q_ISSUES_NO_MILESTONE, { pid: projectId! })
-                              .then(d => setUnmilestoned(d.issues.nodes))
+                              .then(d => setUnmilestoned([...d.issues.nodes].sort((a, b) => b.sortOrder - a.sortOrder)))
                               .catch(e => setError((e as Error).message))
                               .finally(() => setUnmilestoneLoading(false))
                           }}

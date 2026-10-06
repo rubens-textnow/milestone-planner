@@ -42,6 +42,7 @@ export interface Issue {
   startedAt: string | null
   completedAt: string | null
   dueDate: string | null
+  sortOrder: number
   state: { name: string; type: string } | null
   assignee: { displayName: string } | null
   parent: { id: string; identifier: string } | null

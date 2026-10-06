@@ -42,10 +42,10 @@ export const M_DELETE_RELATION = `mutation($id:String!){
 }`
 
 export const Q_ISSUES_NO_MILESTONE = `query($pid:ID!){
-  issues(first:250, filter:{ project:{ id:{ eq:$pid } }, projectMilestone:{ null: true } }){
+  issues(first:250, filter:{ project:{ id:{ eq:$pid } }, projectMilestone:{ null: true } }, sort:[{ manual:{ order: Descending } }]){
     nodes{
       id identifier title description estimate
-      createdAt startedAt completedAt dueDate
+      createdAt startedAt completedAt dueDate sortOrder
       state{ name type }
       assignee{ displayName }
       parent{ id identifier }
@@ -56,10 +56,10 @@ export const Q_ISSUES_NO_MILESTONE = `query($pid:ID!){
 }`
 
 export const Q_ISSUES = `query($mid:ID!){
-  issues(first:250, filter:{ projectMilestone:{ id:{ eq:$mid } } }){
+  issues(first:250, filter:{ projectMilestone:{ id:{ eq:$mid } } }, sort:[{ manual:{ order: Descending } }]){
     nodes{
       id identifier title description estimate
-      createdAt startedAt completedAt dueDate
+      createdAt startedAt completedAt dueDate sortOrder
       state{ name type }
       assignee{ displayName }
       parent{ id identifier }
