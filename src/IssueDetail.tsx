@@ -1,3 +1,4 @@
+import { useRef, useState, useEffect } from 'react'
 import type { Issue, ScheduleEntry } from './types'
 import { stateColors } from './schedule'
 
@@ -16,11 +17,56 @@ const fmt = (d: Date | null | string) => {
   return date.toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+const MIN_W = 240
+const MAX_W = 800
+const DEFAULT_W = 400
+
 export default function IssueDetail({ issue, sched, blockedBy, blocks, onClose, onSelect }: Props) {
   const c = stateColors(issue.state?.type)
+  const [width, setWidth] = useState(DEFAULT_W)
+  const startX = useRef(0)
+  const startW = useRef(0)
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const next = Math.max(MIN_W, Math.min(MAX_W, startW.current + startX.current - e.clientX))
+      setWidth(next)
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [])
+
+  const onResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault()
+    startX.current = e.clientX
+    startW.current = width
+    document.body.style.cursor = 'ew-resize'
+    document.body.style.userSelect = 'none'
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.max(MIN_W, Math.min(MAX_W, startW.current + startX.current - ev.clientX))
+      setWidth(next)
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   return (
-    <div className="detail-panel">
+    <div className="detail-panel" style={{ width }}>
+      <div className="detail-resize-handle" onMouseDown={onResizeMouseDown} />
       <div className="detail-header">
         <div className="detail-identifier" style={{ color: c.text }}>{issue.identifier}</div>
         <div className="detail-actions">
